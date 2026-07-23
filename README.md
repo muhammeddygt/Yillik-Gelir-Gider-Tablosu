@@ -1,0 +1,1 @@
+# Yillik-Gelir-Gider-Tablosu
