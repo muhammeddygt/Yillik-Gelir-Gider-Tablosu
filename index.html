@@ -13,9 +13,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Birikim Defteri">
 
-<!-- Supabase CDN -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
 <style>
 /* ===== Tokens ===== */
 :root{
@@ -742,13 +739,9 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 (function(){
   "use strict";
 
-  var SUPABASE_URL = "https://yaaogmitacsjdvcsuwqb.supabase.co";
-  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlhYW9nbWl0YWNzamR2Y3N1d3FiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3NjY0MjYsImV4cCI6MjEwMTM0MjQyNn0.A6EjwUD0zspmEkdtLfk6faDUu3jjcaFrNvK3pt9pV0g";
-  var _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
   var MONTHS = ['Ağustos','Eylül','Ekim','Kasım','Aralık','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz'];
   var MONTH_ABBR = {'Ağustos':'Ağu','Eylül':'Eyl','Ekim':'Eki','Kasım':'Kas','Aralık':'Ara','Ocak':'Oca','Şubat':'Şub','Mart':'Mar','Nisan':'Nis','Mayıs':'May','Haziran':'Haz','Temmuz':'Tem'};
-  var STORAGE_KEY = 'birikimDefteri_v3';
+  var STORAGE_KEY = 'birikimDefteri_local_v1';
   var uidCounter = 1;
   function uid(){ return 'id' + (uidCounter++) + '_' + Math.random().toString(36).slice(2,7); }
 
@@ -791,33 +784,17 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     };
   }
 
-  var STATE = normalizeState(defaultState());
-
-  async function loadFromSupabase(){
+  function loadState(){
     try{
-      var res = await _supabase.from('app_state').select('data').eq('id', 1).single();
-      if(res.error) throw res.error;
-      if(res.data && res.data.data){
-        STATE = normalizeState(res.data.data);
-        saveToLocalStorageCache();
-      }
-    }catch(e){
-      try{
-        var raw = localStorage.getItem(STORAGE_KEY);
-        if(raw) STATE = normalizeState(JSON.parse(raw));
-      }catch(err){}
-    }
-  }
-
-  async function save(){
-    saveToLocalStorageCache();
-    try{
-      var upsertRes = await _supabase.from('app_state').upsert({ id: 1, data: STATE, updated_at: new Date() });
-      if(upsertRes.error) console.error(upsertRes.error);
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) return normalizeState(JSON.parse(raw));
     }catch(e){}
+    return normalizeState(defaultState());
   }
 
-  function saveToLocalStorageCache(){
+  var STATE = loadState();
+
+  function save(){
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); }catch(e){}
   }
 
@@ -1852,10 +1829,8 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   document.getElementById('book').addEventListener('click', onClick);
 
   buildTabs();
-  loadFromSupabase().then(function(){
-    baseLeaf.innerHTML = renderPage(0);
-    updateIndicator();
-  });
+  baseLeaf.innerHTML = renderPage(0);
+  updateIndicator();
 })();
 </script>
 
@@ -1871,6 +1846,24 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   
   function applyZoom(){ if(bookEl) bookEl.style.zoom = zoomLevel; }
   applyZoom();
+
+  (function(){
+    var isCtrl = false;
+    window.addEventListener('keydown', function(e){
+      if(e.key === 'Control') isCtrl = true;
+      if(isCtrl && (e.key === '+' || e.key === '=' || e.key === 'Add')){
+        e.preventDefault();
+        zoomLevel = Math.min(1.6, Math.round((zoomLevel + 0.1) * 100) / 100);
+        localStorage.setItem(ZOOM_KEY, zoomLevel); applyZoom();
+      }
+      if(isCtrl && (e.key === '-' || e.key === 'Subtract')){
+        e.preventDefault();
+        zoomLevel = Math.max(0.8, Math.round((zoomLevel - 0.1) * 100) / 100);
+        localStorage.setItem(ZOOM_KEY, zoomLevel); applyZoom();
+      }
+    });
+    window.addEventListener('keyup', function(e){ if(e.key === 'Control') isCtrl = false; });
+  })();
 
   if(zoomInBtn) zoomInBtn.addEventListener('click', function(){
     zoomLevel = Math.min(1.6, Math.round((zoomLevel + 0.1) * 100) / 100);
