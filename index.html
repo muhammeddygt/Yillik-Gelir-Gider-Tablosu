@@ -237,7 +237,6 @@ body::before{
   font-variant-numeric:tabular-nums;
 }
 .hero-value.green{color:var(--green);}
-.hero-note{font-size:10.5px; color:var(--ink-soft); margin-top:2px;}
 
 .section-label{
   font-family:var(--font-display);
@@ -292,7 +291,6 @@ table.ledger tfoot td{
   padding-top:7px;
 }
 .table-scroll{overflow-x:auto; padding-bottom:2px;}
-.done{color:var(--green);}
 .zero{color:#8B8B92;}
 
 .totals-box{
@@ -407,18 +405,6 @@ table.ledger tfoot td{
   box-shadow:0 4px 14px rgba(0,0,0,.25); backdrop-filter:blur(8px);
 }
 .zoom-controls button:hover{background:rgba(20,125,119,.18); border-color:var(--gold-soft);}
-.zoom-controls button:active{background:rgba(20,125,119,.3);}
-
-@media (max-width:720px){
-  .tabs{display:none;}
-  .hero-row{grid-template-columns:1fr;}
-  .leaf{padding:24px 18px 20px 34px;}
-  .page-title{font-size:20px;}
-}
-
-@media (prefers-reduced-motion: reduce){
-  .flipper.animating{transition:none;}
-}
 
 .salary-card{
   background:rgba(47,93,80,0.06);
@@ -552,7 +538,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 .gold-amt{font-family:var(--font-mono); font-size:13px; min-width:70px; display:inline-block;}
 .gold-month{font-size:11px; color:var(--ink-soft); flex:1;}
 .empty-note{font-size:11px; color:var(--ink-soft); font-style:italic; padding:6px 0;}
-.summary-note{font-size:10.5px; color:var(--ink-soft); margin:2px 0 8px;}
 
 .add-btn{
   display:inline-flex; align-items:center; gap:5px;
@@ -616,7 +601,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 .table-del:hover{opacity:1;}
 .field-stack{display:flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:wrap;}
 .field-stack .mini-label{font-size:8.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.04em;}
-.balance-input{width:86px;}
 .bill-row{align-items:flex-start; flex-wrap:wrap;}
 .bill-row .bill-main{display:flex; align-items:center; gap:6px; flex:1; min-width:260px;}
 .bill-row .bill-actions{display:flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:wrap;}
@@ -630,7 +614,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 }
 .transfer-btn.undo{border-color:var(--red); color:var(--red); background:rgba(165,67,58,.06);}
 .transfer-btn:disabled{opacity:.45; cursor:not-allowed;}
-.transfer-note{width:100%; text-align:right; color:var(--green); font-size:9.5px; font-family:var(--font-mono);}
 
 /* Katı Grid Düzeni */
 .debt-row {
@@ -727,7 +710,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   .report-head{align-items:flex-start; flex-direction:column;}
   .install-btn{top:-42px; font-size:10px; padding:6px 9px;}
   .zoom-controls{top:-42px;}
-  .zoom-controls button{font-size:10px; padding:6px 9px;}
 }
 </style>
 </head>
@@ -766,7 +748,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
   var MONTHS = ['Ağustos','Eylül','Ekim','Kasım','Aralık','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz'];
   var MONTH_ABBR = {'Ağustos':'Ağu','Eylül':'Eyl','Ekim':'Eki','Kasım':'Kas','Aralık':'Ara','Ocak':'Oca','Şubat':'Şub','Mart':'Mar','Nisan':'Nis','Mayıs':'May','Haziran':'Haz','Temmuz':'Tem'};
-  var STORAGE_KEY = 'birikimDefteri_v2';
+  var STORAGE_KEY = 'birikimDefteri_v3';
   var uidCounter = 1;
   function uid(){ return 'id' + (uidCounter++) + '_' + Math.random().toString(36).slice(2,7); }
 
@@ -830,7 +812,8 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   async function save(){
     saveToLocalStorageCache();
     try{
-      await _supabase.from('app_state').update({ data: STATE, updated_at: new Date() }).eq('id', 1);
+      var upsertRes = await _supabase.from('app_state').upsert({ id: 1, data: STATE, updated_at: new Date() });
+      if(upsertRes.error) console.error(upsertRes.error);
     }catch(e){}
   }
 
@@ -963,7 +946,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         bal = Math.max(0, faizliKmh - payment);
       } else if(d.tur === 'kredi'){
         sugg = Math.min(Number(d.taksit||0), bal);
-        // Kullanıcı bu ay için özel bir ödeme girdiyse kesinlikle onu baz al
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, bal - payment);
       } else {
@@ -1024,16 +1006,10 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     },0);
     var toplamGider = expTotal + offBudgetTotal + faturaTotal + debtPaidTotal + ekPaidTotal;
     var netKalan = gelir - toplamGider;
-    var ekKalanToplam = STATE.ekBorclular.reduce(function(s,d){
-      if(i < d.startMonthIndex) return s;
-      var ser = calcEkSeries(d);
-      return s + (ser.balances[i]||0);
-    },0);
     return {
       gelir:gelir, toplamGider:toplamGider, netKalan:netKalan,
       sabitGiderTotal:expTotal, offBudgetTotal:offBudgetTotal, faturaTotal:faturaTotal,
-      debtPaidTotal:debtPaidTotal, ekPaidTotal:ekPaidTotal, toplamBorcOdemesi:debtPaidTotal+ekPaidTotal,
-      ekKalanToplam:ekKalanToplam
+      debtPaidTotal:debtPaidTotal, ekPaidTotal:ekPaidTotal, toplamBorcOdemesi:debtPaidTotal+ekPaidTotal
     };
   }
 
@@ -1052,7 +1028,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
   function balanceInputHtml(listName, d, i, value){
     var overridden = hasOwn(d.balanceOverrides, i);
-    return '<input class="table-edit '+(overridden?'is-override':'')+'" data-action="balance" data-list="'+listName+'" data-id="'+d.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(value)+'" title="'+(overridden?'Bu ay için elle girilmiş kesin bakiye':'Otomatik hesaplanan bakiye')+'">';
+    return '<input class="table-edit '+(overridden?'is-override':'')+'" data-action="balance" data-list="'+listName+'" data-id="'+d.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(value)+'">';
   }
 
   function paidToggleHtml(listName, d, i){
@@ -1073,7 +1049,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   }
 
   function principalInputHtml(listName, d){
-    return '<input class="table-edit" data-action="principal" data-list="'+listName+'" data-id="'+d.id+'" type="text" inputmode="decimal" value="'+editVal(d.baslangic)+'" title="Ana borç">';
+    return '<input class="table-edit" data-action="principal" data-list="'+listName+'" data-id="'+d.id+'" type="text" inputmode="decimal" value="'+editVal(d.baslangic)+'">';
   }
 
   var GROUP_ORDER = ['kredi_karti','kmh','kredi','manuel'];
@@ -1109,8 +1085,8 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   }
   function moveButtonsHtml(listName, id){
     return '<span class="move-btns">'+
-      '<button type="button" class="move-btn" data-action="move-up" data-list="'+listName+'" data-id="'+id+'" title="Yukarı taşı">▲</button>'+
-      '<button type="button" class="move-btn" data-action="move-down" data-list="'+listName+'" data-id="'+id+'" title="Aşağı taşı">▼</button>'+
+      '<button type="button" class="move-btn" data-action="move-up" data-list="'+listName+'" data-id="'+id+'" title="Yukarı">▲</button>'+
+      '<button type="button" class="move-btn" data-action="move-down" data-list="'+listName+'" data-id="'+id+'" title="Aşağı">▼</button>'+
     '</span>';
   }
   function missedToggleHtml(listName, d, i){
@@ -1159,7 +1135,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     var faturaRows = STATE.faturalar.map(function(f){
       var cells = MONTHS.map(function(m,i){
         var transferred = (f.cardTransfers || {})[i];
-        return '<td><input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'" '+(transferred?'disabled title="Karta aktarılmış"':'')+'></td>';
+        return '<td><input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'" '+(transferred?'disabled':'')+'></td>';
       }).join('');
       return '<tr><td><input class="table-name-input" data-action="name" data-list="faturalar" data-id="'+f.id+'" value="'+esc(f.ad)+'">'+
         '<button class="table-del" data-action="del" data-list="faturalar" data-id="'+f.id+'" title="Sil">✕</button></td>'+cells+'</tr>';
@@ -1301,45 +1277,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
           '<tr><td>Borsa Getirili Birikim</td>'+borsaRow.join('')+'</tr>'+
         '</tbody>'+
       '</table></div>'+
-      '<div class="section-label" style="margin-top:16px;">Altın Birikimi <small>gram</small></div>'+
-      goldSectionHtml()+
-      '<button class="add-btn" data-action="open-add-gold">+ Altın Ekle</button>'+
-      '<div id="addGoldSlot"></div>'+
-    '</div>';
-  }
-
-  function gramFmt(n){
-    if(n === null || n === undefined) return '0';
-    var num = Number(n);
-    if(isNaN(num)) return '0';
-    return num.toLocaleString('tr-TR',{maximumFractionDigits:2});
-  }
-
-  function goldSectionHtml(){
-    function block(key, label){
-      var arr = STATE.gold[key].slice().sort(function(a,b){return a.mi-b.mi;});
-      var total = arr.reduce(function(s,g){return s+g.gram;},0);
-      var rows = arr.map(function(g){
-        return '<div class="ed-row gold-row"><span class="gold-amt">'+gramFmt(g.gram)+' gr</span>'+
-          '<span class="gold-month">'+MONTHS[g.mi]+'</span>'+
-          '<button class="del-btn" data-list="gold-'+key+'" data-id="'+g.id+'" data-action="del">✕</button></div>';
-      }).join('') || '<div class="empty-note">Henüz '+label+' girişi yok.</div>';
-      return '<div class="gold-block">'+
-        '<div class="gold-block-head"><strong>'+label+'</strong><span>'+gramFmt(total)+' gr</span></div>'+
-        rows+
-      '</div>';
-    }
-    return block('ayar24','24 Ayar') + block('ayar22','22 Ayar');
-  }
-
-  function addGoldFormHtml(){
-    var monthOptions = MONTHS.map(function(m,i){return '<option value="'+i+'">'+m+'</option>';}).join('');
-    return ''+
-    '<div class="add-form">'+
-      '<div class="fr"><label>Ayar</label><select id="ngAyar"><option value="ayar24">24 Ayar</option><option value="ayar22">22 Ayar</option></select></div>'+
-      '<div class="fr"><label>Gram</label><input type="text" inputmode="decimal" id="ngGram" placeholder="0,00"></div>'+
-      '<div class="fr"><label>Alım Ayı</label><select id="ngAy">'+monthOptions+'</select></div>'+
-      '<div class="fr-actions"><button class="mini-btn ghost" id="ngCancel">Vazgeç</button><button class="mini-btn primary" id="ngSave">Ekle</button></div>'+
     '</div>';
   }
 
@@ -1631,8 +1568,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   nextBtn.addEventListener('click', function(){ goTo(current+1); });
 
   function findList(name){
-    if(name === 'gold-ayar24') return STATE.gold.ayar24;
-    if(name === 'gold-ayar22') return STATE.gold.ayar22;
     return STATE[name];
   }
 
@@ -1906,23 +1841,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
             nd.taksit = parseNum(document.getElementById('ndTaksit').value) || baslangic;
           }
           STATE.debts.push(nd);
-          save(); rerenderCurrent();
-        });
-      }
-      return;
-    }
-
-    if(action === 'open-add-gold'){
-      var goldSlot = document.getElementById('addGoldSlot');
-      if(goldSlot){
-        goldSlot.innerHTML = addGoldFormHtml();
-        document.getElementById('ngCancel').addEventListener('click', function(){ goldSlot.innerHTML=''; });
-        document.getElementById('ngSave').addEventListener('click', function(){
-          var ayar = document.getElementById('ngAyar').value;
-          var gram = parseNum(document.getElementById('ngGram').value);
-          var ay = parseInt(document.getElementById('ngAy').value,10);
-          if(gram<=0){ window.alert('Gram girin.'); return; }
-          STATE.gold[ayar].push({id:uid(), gram:gram, mi:isNaN(ay)?0:ay});
           save(); rerenderCurrent();
         });
       }
