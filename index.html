@@ -963,7 +963,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         bal = Math.max(0, faizliKmh - payment);
       } else if(d.tur === 'kredi'){
         sugg = Math.min(Number(d.taksit||0), bal);
-        // Kullanıcı bu ay için özel bir ödeme girdiyse kesinlikle onu baz al, sabit taksite zorlama
+        // Kullanıcı bu ay için özel bir ödeme girdiyse kesinlikle onu baz al
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, bal - payment);
       } else {
@@ -1077,7 +1077,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   }
 
   var GROUP_ORDER = ['kredi_karti','kmh','kredi','manuel'];
-  var GROUP_LABELS = {kredi_karti:'Kredi Kartları', kmh:'KMH Hesapları', kredi:'Krediler (Sabit Taksit)', manuel:'Manuel Takip'};
+  var GROUP_LABELS = {kredi_karti:'Kredi Kartları', kmh:'KMH Hesapları', kredi:'Krediler', manuel:'Manuel Takip'};
 
   function sortedVisibleDebts(){
     return STATE.debts.filter(function(d){return !d.hidden;}).sort(function(a,b){
