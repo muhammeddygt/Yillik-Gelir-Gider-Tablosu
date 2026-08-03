@@ -775,7 +775,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       salaryFixed:{netMaas:69772, sendika:5814, aile:2095, pazarRate:3488, mesaiRate:465},
       salaryMonthly: MONTHS.reduce(function(acc,m){ acc[m]={pazarGun:0, mesaiSaat:0}; return acc; },{}),
       borsaOran: MONTHS.map(function(){return 3.1;}),
-      expenses:[ {id:uid(), ad:'Kira', tutar:15000} ],
+      expenses:[ {id:uid(), ad:'Kira', tutar:15000, monthlyAmounts:MONTHS.map(function(){return 15000;})} ],
       offBudgetExpenses:MONTHS.map(function(){return [];}),
       gold:{ayar24:[], ayar22:[]},
       faturalar:[
@@ -848,7 +848,12 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     });
     out.borsaOran = Array.isArray(out.borsaOran) ? out.borsaOran.slice(0,12) : def.borsaOran.slice();
     while(out.borsaOran.length < 12) out.borsaOran.push(3.1);
-    out.expenses = Array.isArray(out.expenses) ? out.expenses : def.expenses;
+    out.expenses = (Array.isArray(out.expenses) ? out.expenses : def.expenses).map(function(e){
+      var oldAmount = Number(e.tutar || 0);
+      var amounts = Array.isArray(e.monthlyAmounts) ? e.monthlyAmounts.slice(0,12) : MONTHS.map(function(){return oldAmount;});
+      while(amounts.length < 12) amounts.push(oldAmount);
+      return Object.assign({}, e, {monthlyAmounts:amounts.map(function(v){return Number(v || 0);})});
+    });
     out.offBudgetExpenses = Array.isArray(out.offBudgetExpenses) ? out.offBudgetExpenses.slice(0,12) : def.offBudgetExpenses;
     while(out.offBudgetExpenses.length < 12) out.offBudgetExpenses.push([]);
     out.offBudgetExpenses = out.offBudgetExpenses.map(function(monthItems){
@@ -1000,7 +1005,10 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
   function monthTotals(i){
     var gelir = salaryForMonth(i).toplam;
-    var expTotal = STATE.expenses.reduce(function(s,e){return s+Number(e.tutar||0);},0);
+    var expTotal = STATE.expenses.reduce(function(s,e){
+      var val = Array.isArray(e.monthlyAmounts) ? e.monthlyAmounts[i] : e.tutar;
+      return s + Number(val||0);
+    },0);
     var offBudgetTotal = offBudgetTotalForMonth(i);
     var faturaTotal = billTotalForMonth(i);
     var debtPaidTotal = STATE.debts.reduce(function(s,d){
@@ -1371,8 +1379,9 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     '</div>';
 
     var expRows = STATE.expenses.map(function(e){
+      var val = Array.isArray(e.monthlyAmounts) ? e.monthlyAmounts[mi] : e.tutar;
       return '<div class="ed-row"><input class="name-input" data-list="expenses" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
-        '<input class="num-input amt-input" data-list="expenses" data-id="'+e.id+'" data-action="amt" type="text" inputmode="decimal" value="'+editVal(e.tutar)+'">'+
+        '<input class="num-input amt-input" data-list="expenses" data-id="'+e.id+'" data-mi="'+mi+'" data-action="exp-amt" type="text" inputmode="decimal" value="'+editVal(val)+'">'+
         '<button class="del-btn" data-list="expenses" data-id="'+e.id+'" data-action="del">✕</button></div>';
     }).join('');
 
@@ -1398,6 +1407,8 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="bill-amt" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(e,mi))+'" '+(tr?'disabled':'')+'>'+
         '<button class="del-btn" data-list="faturalar" data-id="'+e.id+'" data-action="del">✕</button></div><div class="bill-actions">'+actionHtml+'</div></div>';
     }).join('');
+
+    var mt = monthTotals(mi);
 
     var debtRows = '';
     var lastTurM = null;
@@ -1444,8 +1455,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         '<button class="del-btn" data-list="debts" data-id="'+d.id+'" data-action="del">✕</button></div>';
     });
 
-    var mt = monthTotals(mi);
-
     var ekRows = sortedVisibleEk().map(function(d){
       if(mi < d.startMonthIndex){
         return '<div class="ed-row debt-row na"><div class="debt-identity"><span>'+esc(d.ad)+'</span></div><div class="debt-details"><span class="meta">henüz başlamadı</span></div><div class="progress-row"></div><div class="field-stack"></div><button class="hide-btn" style="visibility:hidden;">🙈</button><button class="del-btn" style="visibility:hidden;">✕</button></div>';
@@ -1470,7 +1479,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     '<div class="page-sub">Gelir, faturalar ve borçlar</div>'+
     '<div class="leaf-scroll">'+
       salaryHtml+
-      '<div class="section-label" style="margin-top:14px;">Sabit Giderler <small>'+fmtShort(STATE.expenses.reduce(function(s,e){return s+Number(e.tutar||0);},0))+'</small></div>'+
+      '<div class="section-label" style="margin-top:14px;">Sabit Giderler <small>'+fmtShort(mt.sabitGiderTotal)+'</small></div>'+
       expRows+
       '<button class="add-btn" data-action="add-simple" data-list="expenses">+ Gider Ekle</button>'+
 
@@ -1673,11 +1682,16 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       if(item){ item.ad = t.value; save(); }
       return;
     }
-    if(action === 'amt'){
+    if(action === 'exp-amt'){
       if(String(t.value).trim()===''){ rerenderCurrent(); return; }
-      var list2 = findList(t.dataset.list);
-      var item2 = list2.filter(function(x){return x.id===t.dataset.id;})[0];
-      if(item2){ item2.tutar = parseNum(t.value); save(); rerenderCurrent(); }
+      var listExp = findList(t.dataset.list);
+      var itemExp = listExp.filter(function(x){return x.id===t.dataset.id;})[0];
+      var expMi = parseInt(t.dataset.mi, 10);
+      if(itemExp){
+        if(!Array.isArray(itemExp.monthlyAmounts)) itemExp.monthlyAmounts = MONTHS.map(function(){return Number(itemExp.tutar||0);});
+        itemExp.monthlyAmounts[expMi] = Math.max(0, parseNum(t.value));
+        save(); rerenderCurrent();
+      }
       return;
     }
     if(action === 'offbudget-name' || action === 'offbudget-amt'){
@@ -1829,6 +1843,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     if(action === 'add-simple'){
       var list2 = findList(t.dataset.list);
       if(t.dataset.list==='faturalar') list2.push({id:uid(), ad:'Yeni Fatura', tutar:0, monthlyAmounts:MONTHS.map(function(){return 0;}), cardTransfers:{}});
+      else if(t.dataset.list==='expenses') list2.push({id:uid(), ad:'Yeni Kalem', tutar:0, monthlyAmounts:MONTHS.map(function(){return 0;})});
       else list2.push({id:uid(), ad:'Yeni Kalem', tutar:0});
       save(); rerenderCurrent(); return;
     }
