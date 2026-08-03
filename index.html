@@ -53,7 +53,6 @@ body{
   overflow:hidden;
 }
 
-/* faint desk vignette */
 body::before{
   content:"";
   position:fixed; inset:0;
@@ -73,7 +72,6 @@ body::before{
   touch-action:pan-y;
 }
 
-/* ===== Book shell ===== */
 .book{
   position:relative;
   width:100%;
@@ -634,7 +632,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 .transfer-btn:disabled{opacity:.45; cursor:not-allowed;}
 .transfer-note{width:100%; text-align:right; color:var(--green); font-size:9.5px; font-family:var(--font-mono);}
 
-/* Katı Grid Düzeni - Üst üste binmeleri ve taşmaları engeller */
+/* Katı Grid Düzeni */
 .debt-row {
   display: grid;
   grid-template-columns: minmax(130px, 1.1fr) minmax(160px, 1.4fr) 60px minmax(240px, auto) 20px 20px;
@@ -1566,7 +1564,15 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   }
 
   function rerenderCurrent(){
+    var scroller = baseLeaf.querySelector('.leaf-scroll');
+    var scrollTop = scroller ? scroller.scrollTop : 0;
+    
     baseLeaf.innerHTML = renderPage(current);
+    
+    var newScroller = baseLeaf.querySelector('.leaf-scroll');
+    if(newScroller){
+      newScroller.scrollTop = scrollTop;
+    }
   }
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
