@@ -954,24 +954,24 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       if(d.tur === 'kredi_karti'){
         var faizli = bal * (1 + (Number(d.faizYuzde||0)/100));
         sugg = bal * ((Number(d.asgariYuzde||0) + Number(d.faizYuzde||0))/100);
-        payment = (d.payments[i] !== undefined) ? d.payments[i] : sugg;
+        payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, faizli - payment);
       } else if(d.tur === 'kmh'){
         var faizliKmh = bal * (1 + (Number(d.faizYuzde||0)/100));
         sugg = bal * (Number(d.faizYuzde||0)/100);
-        payment = (d.payments[i] !== undefined) ? d.payments[i] : sugg;
+        payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, faizliKmh - payment);
       } else if(d.tur === 'kredi'){
         sugg = Math.min(Number(d.taksit||0), bal);
-        // Kullanıcı bu ay için özel bir ödeme girdiyse (payments[i] tanımlıysa) taksit kilidini ez ve o ödemeyi baz al
-        payment = (d.payments[i] !== undefined) ? d.payments[i] : sugg;
+        // Kullanıcı bu ay için özel bir ödeme girdiyse kesinlikle onu baz al, sabit taksite zorlama
+        payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, bal - payment);
       } else {
         sugg = 0;
-        payment = (d.payments[i] !== undefined) ? d.payments[i] : 0;
+        payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : 0;
         bal = Math.max(0, bal - payment);
       }
-      if(hasOwn(d.balanceOverrides, i)) bal = Math.max(0, Number(d.balanceOverrides[i] || 0));
+      if(d.balanceOverrides && hasOwn(d.balanceOverrides, i)) bal = Math.max(0, Number(d.balanceOverrides[i] || 0));
       balances[i] = bal;
       paid[i] = payment;
       suggested[i] = sugg;
@@ -986,9 +986,9 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     for(var i=0;i<12;i++){
       if(i < d.startMonthIndex){ continue; }
       bal += Number((d.additions && d.additions[i]) || 0);
-      var payment = (d.payments[i] !== undefined) ? d.payments[i] : 0;
+      var payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : 0;
       bal = Math.max(0, bal - payment);
-      if(hasOwn(d.balanceOverrides, i)) bal = Math.max(0, Number(d.balanceOverrides[i] || 0));
+      if(d.balanceOverrides && hasOwn(d.balanceOverrides, i)) bal = Math.max(0, Number(d.balanceOverrides[i] || 0));
       balances[i] = bal;
       paid[i] = payment;
     }
@@ -1423,7 +1423,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         return;
       }
       var ser = calcDebtSeries(d);
-      var payVal = (d.payments[mi] !== undefined) ? d.payments[mi] : ser.suggested[mi];
+      var payVal = (d.payments && d.payments[mi] !== undefined) ? d.payments[mi] : ser.suggested[mi];
       var added = additionsForDebt(d,mi);
       var isPaid = !!(d.paidMonths && d.paidMonths[mi]);
       var isMissed = !!(d.missedMonths && d.missedMonths[mi]);
@@ -1461,7 +1461,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         return '<div class="ed-row debt-row na"><div class="debt-identity"><span>'+esc(d.ad)+'</span></div><div class="debt-details"><span class="meta">henüz başlamadı</span></div><div class="progress-row"></div><div class="field-stack"></div><button class="hide-btn" style="visibility:hidden;">🙈</button><button class="del-btn" style="visibility:hidden;">✕</button></div>';
       }
       var ser = calcEkSeries(d);
-      var payVal = (d.payments[mi] !== undefined) ? d.payments[mi] : 0;
+      var payVal = (d.payments && d.payments[mi] !== undefined) ? d.payments[mi] : 0;
       var isPaidEk = !!(d.paidMonths && d.paidMonths[mi]);
       var isMissedEk = !!(d.missedMonths && d.missedMonths[mi]);
       return '<div class="ed-row debt-row'+(isPaidEk?' paid':'')+(isMissedEk?' missed':'')+'">'+
@@ -1743,6 +1743,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       var item3 = list3.filter(function(x){return x.id===t.dataset.id;})[0];
       var mi3 = parseInt(t.dataset.mi,10);
       if(item3){
+        item3.payments = item3.payments || {};
         if(String(t.value).trim()===''){ delete item3.payments[mi3]; }
         else item3.payments[mi3] = parseNum(t.value);
         save(); rerenderCurrent();
