@@ -963,6 +963,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         bal = Math.max(0, faizliKmh - payment);
       } else if(d.tur === 'kredi'){
         sugg = Math.min(Number(d.taksit||0), bal);
+        // Kullanıcı bu ay için özel bir ödeme girdiyse (payments[i] tanımlıysa) taksit kilidini ez ve o ödemeyi baz al
         payment = (d.payments[i] !== undefined) ? d.payments[i] : sugg;
         bal = Math.max(0, bal - payment);
       } else {
@@ -1732,13 +1733,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       if(balanceItem){
         balanceItem.balanceOverrides = balanceItem.balanceOverrides || {};
         if(String(t.value).trim()==='') delete balanceItem.balanceOverrides[balanceMi];
-        else {
-          balanceItem.balanceOverrides[balanceMi] = Math.max(0, parseNum(t.value));
-          // Kullanıcı ilgili ayın bakiyesini doğrudan değiştirdiğinde sonraki aylara otomatik kilit atıyoruz ki bakiye zinciri bozulmasın
-          var ser = (t.dataset.list === 'debts') ? calcDebtSeries(balanceItem) : calcEkSeries(balanceItem);
-          var currentBal = balanceItem.balanceOverrides[balanceMi];
-          // Sonraki ayların baz alması için ilgili ayın ödemesini sabitleyelim
-        }
+        else balanceItem.balanceOverrides[balanceMi] = Math.max(0, parseNum(t.value));
         save(); rerenderCurrent();
       }
       return;
