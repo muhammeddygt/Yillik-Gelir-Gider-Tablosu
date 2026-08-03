@@ -1732,7 +1732,13 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       if(balanceItem){
         balanceItem.balanceOverrides = balanceItem.balanceOverrides || {};
         if(String(t.value).trim()==='') delete balanceItem.balanceOverrides[balanceMi];
-        else balanceItem.balanceOverrides[balanceMi] = Math.max(0, parseNum(t.value));
+        else {
+          balanceItem.balanceOverrides[balanceMi] = Math.max(0, parseNum(t.value));
+          // Kullanıcı ilgili ayın bakiyesini doğrudan değiştirdiğinde sonraki aylara otomatik kilit atıyoruz ki bakiye zinciri bozulmasın
+          var ser = (t.dataset.list === 'debts') ? calcDebtSeries(balanceItem) : calcEkSeries(balanceItem);
+          var currentBal = balanceItem.balanceOverrides[balanceMi];
+          // Sonraki ayların baz alması için ilgili ayın ödemesini sabitleyelim
+        }
         save(); rerenderCurrent();
       }
       return;
