@@ -375,6 +375,17 @@ table.ledger tfoot td{
   text-align:center;
 }
 
+.sync-dot{
+  width:14px; height:14px; min-width:14px; border-radius:50%;
+  border:2px solid rgba(255,255,255,.3);
+  background:#8B8B92; padding:0; cursor:pointer; flex:none;
+  transition:background .3s;
+}
+.sync-dot.ok{background:var(--green);}
+.sync-dot.saving,.sync-dot.loading{background:#D9A441; animation:syncPulse 1s ease-in-out infinite;}
+.sync-dot.error{background:var(--red); animation:none;}
+@keyframes syncPulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
 .corner-title{
   position:absolute;
   top:-38px; left:0;
@@ -589,6 +600,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 }
 .table-edit:focus{outline:none; border-color:var(--gold); box-shadow:0 0 0 2px rgba(20,125,119,.12);}
 .table-edit.is-override{background:#E1F3F0; border-color:var(--gold);}
+.oran-input.is-override{background:#E1F3F0; border-color:var(--gold);}
 .table-name-input{
   width:132px; min-width:110px; border:0; border-bottom:1px dashed var(--rule);
   background:transparent; color:var(--ink); font-family:var(--font-ui); font-size:11px;
@@ -735,6 +747,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       <button class="nav-btn" id="prevBtn" aria-label="Önceki sayfa">&#10094;</button>
       <span class="page-indicator" id="pageIndicator">1 / 13</span>
       <button class="nav-btn" id="nextBtn" aria-label="Sonraki sayfa">&#10095;</button>
+      <button type="button" class="sync-dot" id="syncDot" title="Bulut senkron durumu" aria-label="Bulut senkron durumu"></button>
     </div>
   </div>
 
@@ -793,7 +806,22 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
   var STATE = normalizeState(defaultState());
 
+  var syncDotEl = document.getElementById('syncDot');
+  function setSyncStatus(status, detail){
+    if(!syncDotEl) return;
+    syncDotEl.classList.remove('ok','saving','error','loading');
+    syncDotEl.classList.add(status);
+    var labels = {
+      loading:'Kontrol ediliyor…',
+      ok:'Bulutla senkronize ✓ (dokunarak yenile)',
+      saving:'Kaydediliyor…',
+      error:'⚠ Buluta ulaşılamıyor, değişiklikler şu an sadece bu cihazda kayıtlı'+(detail?(' — '+detail):'')+' (dokunarak tekrar dene)'
+    };
+    syncDotEl.title = labels[status] || '';
+  }
+
   async function loadFromSupabase(){
+    setSyncStatus('loading');
     try{
       var res = await _supabase.from('app_state').select('data').eq('id', 1).single();
       if(res.error) throw res.error;
@@ -801,20 +829,50 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         STATE = normalizeState(res.data.data);
         saveToLocalStorageCache();
       }
+      setSyncStatus('ok');
     }catch(e){
       try{
         var raw = localStorage.getItem(STORAGE_KEY);
         if(raw) STATE = normalizeState(JSON.parse(raw));
       }catch(err){}
+      setSyncStatus('error', e && e.message ? e.message : 'bağlanılamadı');
+    }
+  }
+
+  async function refreshFromCloud(force){
+    var active = document.activeElement;
+    var bookEl = document.getElementById('book');
+    var isEditing = active && bookEl && bookEl.contains(active) && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName);
+    if((isEditing || animating) && !force) return;
+    setSyncStatus('loading');
+    try{
+      var res = await _supabase.from('app_state').select('data').eq('id', 1).single();
+      if(res.error) throw res.error;
+      if(res.data && res.data.data){
+        var fresh = normalizeState(res.data.data);
+        if(JSON.stringify(fresh) !== JSON.stringify(STATE)){
+          STATE = fresh;
+          saveToLocalStorageCache();
+          rerenderCurrent();
+        }
+      }
+      setSyncStatus('ok');
+    }catch(e){
+      setSyncStatus('error', e && e.message ? e.message : 'bağlanılamadı');
     }
   }
 
   async function save(){
     saveToLocalStorageCache();
+    setSyncStatus('saving');
     try{
       var upsertRes = await _supabase.from('app_state').upsert({ id: 1, data: STATE, updated_at: new Date() });
-      if(upsertRes.error) console.error(upsertRes.error);
-    }catch(e){}
+      if(upsertRes.error){ console.error(upsertRes.error); setSyncStatus('error', upsertRes.error.message); return; }
+      setSyncStatus('ok');
+    }catch(e){
+      console.error(e);
+      setSyncStatus('error', e && e.message ? e.message : 'bağlanılamadı');
+    }
   }
 
   function saveToLocalStorageCache(){
@@ -901,6 +959,22 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   }
 
   function hasOwn(obj, key){ return Object.prototype.hasOwnProperty.call(obj || {}, key); }
+  // Bir borcun taksit/asgariYuzde/faizYuzde gibi alanlarını AYA ÖZEL okur.
+  // O ay için özel bir değer girilmemişse, borcun genel (varsayılan) değerine düşer.
+  // Bu sayede tek bir ayda değer değiştirmek diğer ayları etkilemez.
+  function debtFieldMonthly(d, field, i){
+    var arr = d[field + 'Monthly'];
+    if(Array.isArray(arr) && arr[i] !== null && arr[i] !== undefined && arr[i] !== '') return Number(arr[i]);
+    return Number(d[field] || 0);
+  }
+  function setDebtFieldMonthly(d, field, i, value){
+    if(!Array.isArray(d[field + 'Monthly'])) d[field + 'Monthly'] = new Array(12).fill(null);
+    d[field + 'Monthly'][i] = value;
+  }
+  function debtFieldIsOverridden(d, field, i){
+    var arr = d[field + 'Monthly'];
+    return Array.isArray(arr) && arr[i] !== null && arr[i] !== undefined && arr[i] !== '';
+  }
   function billAmountForMonth(f, i){
     if(Array.isArray(f.monthlyAmounts)) return Number(f.monthlyAmounts[i] || 0);
     return Number(f.tutar || 0);
@@ -935,17 +1009,21 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       bal += additionsForDebt(d, i);
       var payment, sugg;
       if(d.tur === 'kredi_karti'){
-        var faizli = bal * (1 + (Number(d.faizYuzde||0)/100));
-        sugg = bal * ((Number(d.asgariYuzde||0) + Number(d.faizYuzde||0))/100);
+        var faizYuzdeVal = debtFieldMonthly(d,'faizYuzde',i);
+        var asgariYuzdeVal = debtFieldMonthly(d,'asgariYuzde',i);
+        var faizli = bal * (1 + (faizYuzdeVal/100));
+        sugg = bal * ((asgariYuzdeVal + faizYuzdeVal)/100);
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, faizli - payment);
       } else if(d.tur === 'kmh'){
-        var faizliKmh = bal * (1 + (Number(d.faizYuzde||0)/100));
-        sugg = bal * (Number(d.faizYuzde||0)/100);
+        var faizYuzdeValKmh = debtFieldMonthly(d,'faizYuzde',i);
+        var faizliKmh = bal * (1 + (faizYuzdeValKmh/100));
+        sugg = bal * (faizYuzdeValKmh/100);
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, faizliKmh - payment);
       } else if(d.tur === 'kredi'){
-        sugg = Math.min(Number(d.taksit||0), bal);
+        var taksitVal = debtFieldMonthly(d,'taksit',i);
+        sugg = Math.min(taksitVal, bal);
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, bal - payment);
       } else {
@@ -1367,14 +1445,14 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       
       var extra = '';
       if(d.tur === 'kredi_karti'){
-        extra = '<span class="rate-field"><span class="meta">asg</span><input class="oran-input" data-list="debts" data-id="'+d.id+'" data-field="asgariYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(d.asgariYuzde).replace(',00','')+'"><span class="unit">%</span></span>'+
-                '<span class="rate-field"><span class="meta">faiz</span><input class="oran-input" data-list="debts" data-id="'+d.id+'" data-field="faizYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(d.faizYuzde).replace(',00','')+'"><span class="unit">%</span></span>'+
+        extra = '<span class="rate-field"><span class="meta">asg</span><input class="oran-input'+(debtFieldIsOverridden(d,'asgariYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="asgariYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'asgariYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
+                '<span class="rate-field"><span class="meta">faiz</span><input class="oran-input'+(debtFieldIsOverridden(d,'faizYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="faizYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'faizYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
                 '<span class="meta">&middot; '+fmtShort(ser.balances[mi])+'</span>';
       } else if(d.tur === 'kmh'){
-        extra = '<span class="rate-field"><span class="meta">faiz</span><input class="oran-input" data-list="debts" data-id="'+d.id+'" data-field="faizYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(d.faizYuzde).replace(',00','')+'"><span class="unit">%</span></span>'+
+        extra = '<span class="rate-field"><span class="meta">faiz</span><input class="oran-input'+(debtFieldIsOverridden(d,'faizYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="faizYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'faizYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
                 '<span class="meta">&middot; '+fmtShort(ser.balances[mi])+'</span>';
       } else if(d.tur === 'kredi'){
-        extra = '<span class="rate-field"><span class="meta">taksit</span><input class="oran-input" style="width:65px;" data-list="debts" data-id="'+d.id+'" data-field="taksit" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(d.taksit).replace(',00','')+'"></span>'+
+        extra = '<span class="rate-field"><span class="meta">taksit</span><input class="oran-input'+(debtFieldIsOverridden(d,'taksit',mi)?' is-override':'')+'" style="width:65px;" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="taksit" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'taksit',mi)).replace(',00','')+'"></span>'+
                 '<span class="meta">&middot; '+fmtShort(ser.balances[mi])+'</span>';
       } else {
         extra = '<span class="meta">'+fmtShort(ser.balances[mi])+'</span>';
@@ -1686,10 +1764,17 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       return;
     }
     if(action === 'kk-rate'){
-      if(String(t.value).trim()===''){ rerenderCurrent(); return; }
       var list9 = findList(t.dataset.list);
       var item9 = list9.filter(function(x){return x.id===t.dataset.id;})[0];
-      if(item9){ item9[t.dataset.field] = Math.max(0, parseNum(t.value)); save(); rerenderCurrent(); }
+      var mi9 = parseInt(t.dataset.mi,10);
+      if(item9 && !isNaN(mi9)){
+        if(String(t.value).trim()===''){
+          if(Array.isArray(item9[t.dataset.field+'Monthly'])) item9[t.dataset.field+'Monthly'][mi9] = null;
+        } else {
+          setDebtFieldMonthly(item9, t.dataset.field, mi9, Math.max(0, parseNum(t.value)));
+        }
+        save(); rerenderCurrent();
+      }
       return;
     }
   }
@@ -1856,6 +1941,14 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     baseLeaf.innerHTML = renderPage(0);
     updateIndicator();
   });
+
+  // Cihazlar arası tam veri akışı: sekme/uygulama tekrar görünür olduğunda,
+  // pencere odağı geri geldiğinde ve düzenli aralıklarla buluttan kontrol et.
+  if(syncDotEl) syncDotEl.addEventListener('click', function(){ refreshFromCloud(true); });
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshFromCloud(false); });
+  window.addEventListener('focus', function(){ refreshFromCloud(false); });
+  window.addEventListener('pageshow', function(){ refreshFromCloud(false); });
+  setInterval(function(){ if(!document.hidden) refreshFromCloud(false); }, 25000);
 })();
 </script>
 
