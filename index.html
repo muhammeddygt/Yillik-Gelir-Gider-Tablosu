@@ -807,10 +807,12 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   var STATE = normalizeState(defaultState());
 
   var syncDotEl = document.getElementById('syncDot');
+  var lastSyncErrorDetail = '';
   function setSyncStatus(status, detail){
     if(!syncDotEl) return;
     syncDotEl.classList.remove('ok','saving','error','loading');
     syncDotEl.classList.add(status);
+    if(status === 'error') lastSyncErrorDetail = detail || 'bilinmeyen hata';
     var labels = {
       loading:'Kontrol ediliyor…',
       ok:'Bulutla senkronize ✓ (dokunarak yenile)',
@@ -1944,7 +1946,12 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
   // Cihazlar arası tam veri akışı: sekme/uygulama tekrar görünür olduğunda,
   // pencere odağı geri geldiğinde ve düzenli aralıklarla buluttan kontrol et.
-  if(syncDotEl) syncDotEl.addEventListener('click', function(){ refreshFromCloud(true); });
+  if(syncDotEl) syncDotEl.addEventListener('click', function(){
+    if(syncDotEl.classList.contains('error')){
+      window.alert('⚠ Buluta ulaşılamıyor\n\nHata: '+lastSyncErrorDetail+'\n\nVerilerin bu cihazda güvende (yerelde kayıtlı), sadece diğer cihazlarla henüz senkron değil. Şimdi tekrar deniyorum…');
+    }
+    refreshFromCloud(true);
+  });
   document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshFromCloud(false); });
   window.addEventListener('focus', function(){ refreshFromCloud(false); });
   window.addEventListener('pageshow', function(){ refreshFromCloud(false); });
