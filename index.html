@@ -488,7 +488,7 @@ table.ledger tfoot td{
   cursor:pointer; margin-right:5px; vertical-align:middle; flex:none;
 }
 .paid-toggle.on{background:var(--green); border-color:var(--green);}
-.ed-row.debt-row.paid{background:rgba(63,107,76,.09); border-radius:8px;}
+.ed-row.paid{background:rgba(63,107,76,.09); border-radius:8px;}
 
 td.paid-cell{background:rgba(63,107,76,.16);}
 td.paid-cell .table-edit{border-color:var(--green);}
@@ -901,7 +901,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     while(out.offBudgetExpenses.length < 12) out.offBudgetExpenses.push([]);
     out.offBudgetExpenses = out.offBudgetExpenses.map(function(monthItems){
       return (Array.isArray(monthItems) ? monthItems : []).map(function(item){
-        return {id:item.id || uid(), ad:item.ad || 'Yeni Harcama', tutar:Number(item.tutar || 0)};
+        return Object.assign({}, item, {id:item.id || uid(), ad:item.ad || 'Yeni Harcama', tutar:Number(item.tutar || 0), paid: !!item.paid});
       });
     });
     out.faturalar = (Array.isArray(out.faturalar) ? out.faturalar : def.faturalar).map(function(f){
@@ -1055,6 +1055,64 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       paid[i] = payment;
     }
     return {balances:balances, paid:paid};
+  }
+
+  // Borçlar + ek borçlular toplamının her ay sonundaki (o ayın ödemeleri düşüldükten
+  // sonraki) kalan bakiyesi. Hem Özet sayfası hem de tekil ay sayfaları bunu kullanır.
+  function computeGrandTotals(){
+    var ekTotalStart = STATE.ekBorclular.reduce(function(s,d){return s+d.baslangic;},0);
+    var ekTotalByMonth = [];
+    for(var iEk=0;iEk<12;iEk++){
+      var tEk = STATE.ekBorclular.reduce(function(s,d){
+        if(iEk < d.startMonthIndex) return s;
+        var ser = calcEkSeries(d);
+        return s + (ser.balances[iEk]||0);
+      },0);
+      ekTotalByMonth.push(tEk);
+    }
+    var debtOnlyTotalStart = STATE.debts.reduce(function(s,d){return s+d.baslangic;},0);
+    var debtOnlyTotalByMonth = [];
+    for(var i=0;i<12;i++){
+      var t = STATE.debts.reduce(function(s,d){
+        if(i < d.startMonthIndex) return s;
+        var ser = calcDebtSeries(d);
+        return s + (ser.balances[i]||0);
+      },0);
+      debtOnlyTotalByMonth.push(t);
+    }
+    var totalStart = debtOnlyTotalStart + ekTotalStart;
+    var totalByMonth = debtOnlyTotalByMonth.map(function(v,i){return v + ekTotalByMonth[i];});
+    return {
+      ekTotalStart:ekTotalStart, ekTotalByMonth:ekTotalByMonth,
+      debtOnlyTotalStart:debtOnlyTotalStart, debtOnlyTotalByMonth:debtOnlyTotalByMonth,
+      totalStart:totalStart, totalByMonth:totalByMonth
+    };
+  }
+
+  // Bir ay "kapandı" sayılır: o ay görünür (gizli olmayan) her borç/ek borçlu/sabit
+  // gider "Ödendi" tikiyle işaretlenmiş VE o aya ait hesap dışı giderlerin hepsi
+  // ödendi işaretlenmiş ise. Gizli kalemler ve henüz başlamamış borçlar hesaba katılmaz.
+  function monthFullyClosed(i){
+    var debtsOk = sortedVisibleDebts().every(function(d){
+      return i < d.startMonthIndex || !!(d.paidMonths && d.paidMonths[i]);
+    });
+    if(!debtsOk) return false;
+    var ekOk = sortedVisibleEk().every(function(d){
+      return i < d.startMonthIndex || !!(d.paidMonths && d.paidMonths[i]);
+    });
+    if(!ekOk) return false;
+    var expOk = STATE.expenses.every(function(e){
+      return !!(e.paidMonths && e.paidMonths[i]);
+    });
+    if(!expOk) return false;
+    var offOk = (STATE.offBudgetExpenses[i]||[]).every(function(item){ return !!item.paid; });
+    return offOk;
+  }
+
+  // İlk "açık" (henüz tamamen kapanmamış) ayın index'i. 12 dönerse tüm yıl kapanmış demektir.
+  function firstOpenMonthIndex(){
+    for(var i=0;i<12;i++){ if(!monthFullyClosed(i)) return i; }
+    return 12;
   }
 
   function salaryForMonth(i){
@@ -1222,32 +1280,14 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     }).join('');
     var faturaTotalCells = MONTHS.map(function(m,i){return '<td>'+fmtShort(billTotalForMonth(i))+'</td>';}).join('');
 
-    var ekTotalStart = STATE.ekBorclular.reduce(function(s,d){return s+d.baslangic;},0);
-    var ekTotalByMonth = [];
-    for(var iEk=0;iEk<12;iEk++){
-      var tEk = STATE.ekBorclular.reduce(function(s,d){
-        if(iEk < d.startMonthIndex) return s;
-        var ser = calcEkSeries(d);
-        return s + (ser.balances[iEk]||0);
-      },0);
-      ekTotalByMonth.push(tEk);
-    }
+    var gt = computeGrandTotals();
+    var ekTotalStart = gt.ekTotalStart, ekTotalByMonth = gt.ekTotalByMonth;
     var ekTotalCells = ekTotalByMonth.map(function(v){return '<td>'+fmtShort(v)+'</td>';}).join('');
 
-    var debtOnlyTotalStart = STATE.debts.reduce(function(s,d){return s+d.baslangic;},0);
-    var debtOnlyTotalByMonth = [];
-    for(var i=0;i<12;i++){
-      var t = STATE.debts.reduce(function(s,d){
-        if(i < d.startMonthIndex) return s;
-        var ser = calcDebtSeries(d);
-        return s + (ser.balances[i]||0);
-      },0);
-      debtOnlyTotalByMonth.push(t);
-    }
+    var debtOnlyTotalStart = gt.debtOnlyTotalStart, debtOnlyTotalByMonth = gt.debtOnlyTotalByMonth;
     var debtOnlyTotalCells = debtOnlyTotalByMonth.map(function(v){return '<td>'+fmtShort(v)+'</td>';}).join('');
 
-    var totalStart = debtOnlyTotalStart + ekTotalStart;
-    var totalByMonth = debtOnlyTotalByMonth.map(function(v,i){return v + ekTotalByMonth[i];});
+    var totalStart = gt.totalStart, totalByMonth = gt.totalByMonth;
     var totalCells = totalByMonth.map(function(v){return '<td>'+fmtShort(v)+'</td>';}).join('');
 
     var headMonths = MONTHS.map(function(m){return '<th>'+MONTH_ABBR[m]+'</th>';}).join('');
@@ -1275,6 +1315,18 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
     var endKalan = totalByMonth[11];
     var endBorsa = borsa[11];
+    var openIdx = firstOpenMonthIndex();
+    var currentRemainingLabel, currentRemainingValue;
+    if(openIdx >= 12){
+      currentRemainingLabel = 'Tüm Yıl Kapandı · Kalan Borç';
+      currentRemainingValue = endKalan;
+    } else if(openIdx === 0){
+      currentRemainingLabel = MONTHS[0]+' İtibarıyla Kalan Borç';
+      currentRemainingValue = totalStart;
+    } else {
+      currentRemainingLabel = MONTHS[openIdx]+' İtibarıyla Kalan Borç';
+      currentRemainingValue = totalByMonth[openIdx-1];
+    }
     var maxFlow = monthlyMetrics.reduce(function(max,mt){return Math.max(max,mt.gelir,mt.toplamGider);},1);
     var reportCards = monthlyMetrics.map(function(mt,i){
       var incomeWidth = Math.max(2,Math.min(100,(mt.gelir/maxFlow)*100));
@@ -1312,7 +1364,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     '</div>'+
     '<div class="hero-row">'+
       '<div class="hero-stat"><div class="hero-label">Başlangıç Borcu</div><div class="hero-value">'+fmtShort(totalStart)+'</div></div>'+
-      '<div class="hero-stat"><div class="hero-label">Temmuz Sonu Kalan</div><div class="hero-value">'+fmtShort(endKalan)+'</div></div>'+
+      '<div class="hero-stat"><div class="hero-label">'+currentRemainingLabel+'</div><div class="hero-value">'+fmtShort(currentRemainingValue)+'</div></div>'+
       '<div class="hero-stat"><div class="hero-label">Borsa Getirili Birikim</div><div class="hero-value green">'+fmtShort(endBorsa)+'</div></div>'+
     '</div>'+
     '<div class="leaf-scroll">'+
@@ -1398,14 +1450,18 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 
     var expRows = STATE.expenses.map(function(e){
       var val = Array.isArray(e.monthlyAmounts) ? e.monthlyAmounts[mi] : e.tutar;
-      return '<div class="ed-row"><input class="name-input" data-list="expenses" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
+      var expPaid = !!(e.paidMonths && e.paidMonths[mi]);
+      return '<div class="ed-row'+(expPaid?' paid':'')+'">'+paidToggleHtml('expenses',e,mi)+'<input class="name-input" data-list="expenses" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
         '<input class="num-input amt-input" data-list="expenses" data-id="'+e.id+'" data-mi="'+mi+'" data-action="exp-amt" type="text" inputmode="decimal" value="'+editVal(val)+'">'+
         '<button class="del-btn" data-list="expenses" data-id="'+e.id+'" data-action="del">✕</button></div>';
     }).join('');
 
     var offBudgetItems = STATE.offBudgetExpenses[mi] || [];
     var offBudgetRows = offBudgetItems.map(function(e){
-      return '<div class="ed-row offbudget-row"><input class="name-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-name" value="'+esc(e.ad)+'">'+
+      var obPaid = !!e.paid;
+      return '<div class="ed-row offbudget-row'+(obPaid?' paid':'')+'">'+
+        '<button type="button" class="paid-toggle'+(obPaid?' on':'')+'" data-action="offbudget-toggle-paid" data-id="'+e.id+'" data-mi="'+mi+'" title="Ödendi">'+(obPaid?'✓':'')+'</button>'+
+        '<input class="name-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-name" value="'+esc(e.ad)+'">'+
         '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-amt" type="text" inputmode="decimal" value="'+editVal(e.tutar)+'">'+
         '<button class="del-btn" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-del">✕</button></div>';
     }).join('');
@@ -1427,6 +1483,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     }).join('');
 
     var mt = monthTotals(mi);
+    var kalanGenelBorc = computeGrandTotals().totalByMonth[mi];
 
     var debtRows = '';
     var lastTurM = null;
@@ -1526,6 +1583,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       '<div><div class="t-label">Net Kalan</div><div class="t-value green">'+fmt(mt.netKalan)+'</div></div>'+
       '<div><div class="t-label">Ödenen</div><div class="t-value">'+fmt(mt.toplamBorcOdemesi)+'</div></div>'+
       '<div><div class="t-label">Hesap Dışı</div><div class="t-value">'+fmt(mt.offBudgetTotal)+'</div></div>'+
+      '<div><div class="t-label">'+monthName+' Ödenince Kalan Genel Borç</div><div class="t-value">'+fmt(kalanGenelBorc)+'</div></div>'+
     '</div>';
   }
 
@@ -1848,7 +1906,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     if(action === 'add-offbudget'){
       var addOffMi = parseInt(t.dataset.mi,10);
       if(isNaN(addOffMi) || addOffMi<0 || addOffMi>11) return;
-      STATE.offBudgetExpenses[addOffMi].push({id:uid(),ad:'Yeni Harcama',tutar:0});
+      STATE.offBudgetExpenses[addOffMi].push({id:uid(),ad:'Yeni Harcama',tutar:0,paid:false});
       save(); rerenderCurrent(); return;
     }
     if(action === 'offbudget-del'){
@@ -1856,6 +1914,13 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       var delOffList = STATE.offBudgetExpenses[delOffMi] || [];
       var delOffIndex = delOffList.findIndex(function(x){return x.id===t.dataset.id;});
       if(delOffIndex>-1){delOffList.splice(delOffIndex,1);save();rerenderCurrent();}
+      return;
+    }
+    if(action === 'offbudget-toggle-paid'){
+      var potMi = parseInt(t.dataset.mi,10);
+      var potList = STATE.offBudgetExpenses[potMi] || [];
+      var potItem = potList.filter(function(x){return x.id===t.dataset.id;})[0];
+      if(potItem){ potItem.paid = !potItem.paid; save(); rerenderCurrent(); }
       return;
     }
     if(action === 'del'){
