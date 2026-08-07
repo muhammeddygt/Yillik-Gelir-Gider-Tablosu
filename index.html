@@ -1105,6 +1105,11 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       return !!(e.paidMonths && e.paidMonths[i]);
     });
     if(!expOk) return false;
+    var faturaOk = STATE.faturalar.every(function(f){
+      var transferred = (f.cardTransfers || {})[i];
+      return !!transferred || !!(f.paidMonths && f.paidMonths[i]);
+    });
+    if(!faturaOk) return false;
     var offOk = (STATE.offBudgetExpenses[i]||[]).every(function(item){ return !!item.paid; });
     return offOk;
   }
@@ -1273,7 +1278,12 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     var faturaRows = STATE.faturalar.map(function(f){
       var cells = MONTHS.map(function(m,i){
         var transferred = (f.cardTransfers || {})[i];
-        return '<td><input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'" '+(transferred?'disabled':'')+'></td>';
+        if(transferred){
+          var trCard2 = STATE.debts.filter(function(c){return c.id === transferred.cardId;})[0];
+          var trCardName2 = trCard2 ? trCard2.ad : 'silinmiş kart';
+          return '<td><span class="meta" style="display:block;">→ '+esc(trCardName2)+'</span><input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'" disabled></td>';
+        }
+        return '<td>'+paidToggleHtml('faturalar',f,i)+'<input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'"></td>';
       }).join('');
       return '<tr><td><input class="table-name-input" data-action="name" data-list="faturalar" data-id="'+f.id+'" value="'+esc(f.ad)+'">'+
         '<button class="table-del" data-action="del" data-list="faturalar" data-id="'+f.id+'" title="Sil">✕</button></td>'+cells+'</tr>';
@@ -1469,15 +1479,20 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     var creditCards = STATE.debts.filter(function(d){return d.tur==='kredi_karti';});
     var faturaRows = STATE.faturalar.map(function(e){
       var tr = (e.cardTransfers || {})[mi];
-      var actionHtml;
+      var billPaid = !!(e.paidMonths && e.paidMonths[mi]);
+      var actionHtml, toggleHtml;
       if(tr){
-        actionHtml = '<button class="transfer-btn undo" data-action="undo-bill-transfer" data-id="'+e.id+'" data-mi="'+mi+'">Geri al</button>';
+        var trCard = STATE.debts.filter(function(c){return c.id === tr.cardId;})[0];
+        var trCardName = trCard ? trCard.ad : 'silinmiş kart';
+        actionHtml = '<span class="meta">→ '+esc(trCardName)+'</span> <button class="transfer-btn undo" data-action="undo-bill-transfer" data-id="'+e.id+'" data-mi="'+mi+'">Geri al</button>';
+        toggleHtml = '';
       } else {
         var options = creditCards.map(function(card){return '<option value="'+card.id+'">'+esc(card.ad)+'</option>';}).join('');
         actionHtml = '<select class="bill-card-select" id="billCard_'+e.id+'_'+mi+'" '+(creditCards.length?'':'disabled')+'><option value="">Kart seç</option>'+options+'</select>'+
           '<button class="transfer-btn" data-action="transfer-bill" data-id="'+e.id+'" data-mi="'+mi+'" '+((mi>=11 || !creditCards.length)?'disabled':'')+'>Karta aktar</button>';
+        toggleHtml = paidToggleHtml('faturalar',e,mi);
       }
-      return '<div class="ed-row bill-row"><div class="bill-main"><input class="name-input" data-list="faturalar" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
+      return '<div class="ed-row bill-row'+((billPaid||tr)?' paid':'')+'"><div class="bill-main">'+toggleHtml+'<input class="name-input" data-list="faturalar" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
         '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="bill-amt" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(e,mi))+'" '+(tr?'disabled':'')+'>'+
         '<button class="del-btn" data-list="faturalar" data-id="'+e.id+'" data-action="del">✕</button></div><div class="bill-actions">'+actionHtml+'</div></div>';
     }).join('');
