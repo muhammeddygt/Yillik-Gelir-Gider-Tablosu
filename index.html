@@ -2125,4 +2125,170 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       var i = list.findIndex(function(x){return x.id===t.dataset.id;});
       if(i>-1){
         var delItem = list[i];
-        lastDeleted
+        lastDeleted = {type:'list', listName:t.dataset.list, item:delItem, index:i};
+        list.splice(i,1); save(); rerenderCurrent();
+        showUndoToast('"'+(delItem.ad||'Kalem')+'" silindi.');
+      }
+      return;
+    }
+    if(action === 'add-simple'){
+      var list2 = findList(t.dataset.list);
+      if(t.dataset.list==='faturalar') list2.push({id:uid(), ad:'Yeni Fatura', tutar:0, monthlyAmounts:MONTHS.map(function(){return 0;}), cardTransfers:{}, sortOrder:STATE.faturalar.length});
+      else if(t.dataset.list==='expenses') list2.push({id:uid(), ad:'Yeni Kalem', tutar:0, monthlyAmounts:MONTHS.map(function(){return 0;})});
+      else list2.push({id:uid(), ad:'Yeni Kalem', tutar:0});
+      save(); rerenderCurrent(); return;
+    }
+    if(action === 'add-ek'){
+      STATE.ekBorclular.push({id:uid(), ad:'Yeni Kişi', baslangic:0, startMonthIndex:Math.max(0,current-1), payments:{}, balanceOverrides:{}, additions:{}, paidMonths:{}, missedMonths:{}, hidden:false, sortOrder:STATE.ekBorclular.length});
+      save(); rerenderCurrent(); return;
+    }
+    if(action === 'transfer-bill'){
+      var transferMi = parseInt(t.dataset.mi,10);
+      var transferBill = STATE.faturalar.filter(function(x){return x.id===t.dataset.id;})[0];
+      var cardSelect = document.getElementById('billCard_'+t.dataset.id+'_'+transferMi);
+      var cardId = cardSelect ? cardSelect.value : '';
+      var amount = transferBill ? billAmountForMonth(transferBill, transferMi) : 0;
+      if(!cardId){ window.alert('Kart seçin.'); return; }
+      transferBill.cardTransfers = transferBill.cardTransfers || {};
+      transferBill.cardTransfers[transferMi] = {cardId:cardId, amount:amount, targetMonth:transferMi+1};
+      transferBill.monthlyAmounts[transferMi] = 0;
+      save(); rerenderCurrent(); return;
+    }
+    if(action === 'undo-bill-transfer'){
+      var undoMi = parseInt(t.dataset.mi,10);
+      var undoBill = STATE.faturalar.filter(function(x){return x.id===t.dataset.id;})[0];
+      var undoTransfer = undoBill && undoBill.cardTransfers ? undoBill.cardTransfers[undoMi] : null;
+      if(undoBill && undoTransfer){
+        undoBill.monthlyAmounts[undoMi] = Number(undoTransfer.amount || 0);
+        delete undoBill.cardTransfers[undoMi];
+        save(); rerenderCurrent();
+      }
+      return;
+    }
+    if(action === 'transfer-offbudget'){
+      var obTransferMi = parseInt(t.dataset.mi,10);
+      var obTransferList = STATE.offBudgetExpenses[obTransferMi] || [];
+      var obTransferItem = obTransferList.filter(function(x){return x.id===t.dataset.id;})[0];
+      var obCardSelect = document.getElementById('obCard_'+t.dataset.id+'_'+obTransferMi);
+      var obCardId = obCardSelect ? obCardSelect.value : '';
+      if(!obCardId){ window.alert('Kart seçin.'); return; }
+      if(obTransferItem){
+        var obAmount = Number(obTransferItem.tutar||0);
+        obTransferItem.cardTransfer = {cardId:obCardId, amount:obAmount, targetMonth:obTransferMi+1};
+        obTransferItem.tutar = 0;
+        save(); rerenderCurrent();
+      }
+      return;
+    }
+    if(action === 'undo-offbudget-transfer'){
+      var obUndoMi = parseInt(t.dataset.mi,10);
+      var obUndoList = STATE.offBudgetExpenses[obUndoMi] || [];
+      var obUndoItem = obUndoList.filter(function(x){return x.id===t.dataset.id;})[0];
+      if(obUndoItem && obUndoItem.cardTransfer){
+        obUndoItem.tutar = Number(obUndoItem.cardTransfer.amount || 0);
+        obUndoItem.cardTransfer = null;
+        save(); rerenderCurrent();
+      }
+      return;
+    }
+    if(action === 'open-add-debt'){
+      pendingAddDebtMonth = Math.max(0,current - 1);
+      var slot = document.getElementById('addDebtSlot');
+      if(slot){
+        slot.innerHTML = addDebtFormHtml(pendingAddDebtMonth);
+        var turSel = document.getElementById('ndTur');
+        var kkRow = document.getElementById('ndKKRow');
+        var kmhRow = document.getElementById('ndKMHRow');
+        var krRow = document.getElementById('ndKrediRow');
+        turSel.addEventListener('change', function(){
+          kkRow.style.display = (turSel.value==='kredi_karti') ? 'flex' : 'none';
+          kmhRow.style.display = (turSel.value==='kmh') ? 'flex' : 'none';
+          krRow.style.display = (turSel.value==='kredi') ? 'flex' : 'none';
+        });
+        document.getElementById('ndCancel').addEventListener('click', function(){ slot.innerHTML=''; });
+        document.getElementById('ndSave').addEventListener('click', function(){
+          var ad = document.getElementById('ndAd').value.trim() || 'Yeni Borç';
+          var tur = turSel.value;
+          var baslangic = parseNum(document.getElementById('ndBaslangic').value);
+          var startMonth = parseInt(document.getElementById('ndStartMonth').value,10);
+          var nd = {id:uid(), ad:ad, tur:tur, baslangic:baslangic, startMonthIndex:isNaN(startMonth)?0:startMonth, payments:{}, balanceOverrides:{}, additions:{}, paidMonths:{}, missedMonths:{}, hidden:false, sortOrder:STATE.debts.length};
+          if(tur==='kredi_karti'){
+            nd.asgariYuzde = parseNum(document.getElementById('ndAsgari').value) || 20;
+            nd.faizYuzde = parseNum(document.getElementById('ndFaiz').value) || 5;
+          } else if(tur==='kmh'){
+            nd.faizYuzde = parseNum(document.getElementById('ndKmhFaiz').value) || 5;
+          } else if(tur==='kredi'){
+            nd.taksit = parseNum(document.getElementById('ndTaksit').value) || baslangic;
+          }
+          STATE.debts.push(nd);
+          save(); rerenderCurrent();
+        });
+      }
+      return;
+    }
+  }
+
+  document.getElementById('book').addEventListener('change', onChange);
+  document.getElementById('book').addEventListener('click', onClick);
+
+  buildTabs();
+  loadFromSupabase().then(function(){
+    baseLeaf.innerHTML = renderPage(0);
+    updateIndicator();
+  });
+
+  // Cihazlar arası tam veri akışı: sekme/uygulama tekrar görünür olduğunda,
+  // pencere odağı geri geldiğinde ve düzenli aralıklarla buluttan kontrol et.
+  if(syncDotEl) syncDotEl.addEventListener('click', function(){
+    if(syncDotEl.classList.contains('error')){
+      window.alert('⚠ Buluta ulaşılamıyor\n\nHata: '+lastSyncErrorDetail+'\n\nVerilerin bu cihazda güvende (yerelde kayıtlı), sadece diğer cihazlarla henüz senkron değil. Şimdi tekrar deniyorum…');
+    }
+    refreshFromCloud(true);
+  });
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshFromCloud(false); });
+  window.addEventListener('focus', function(){ refreshFromCloud(false); });
+  window.addEventListener('pageshow', function(){ refreshFromCloud(false); });
+  setInterval(function(){ if(!document.hidden) refreshFromCloud(false); }, 25000);
+})();
+</script>
+
+<script>
+(function(){
+  var installBtn = document.getElementById('installBtn');
+  var deferredInstallPrompt = null;
+  var bookEl = document.getElementById('book');
+  var zoomOutBtn = document.getElementById('zoomOut');
+  var zoomInBtn = document.getElementById('zoomIn');
+  var ZOOM_KEY = 'birikimDefteri_zoom';
+  var zoomLevel = parseFloat(localStorage.getItem(ZOOM_KEY)) || 1;
+  
+  function applyZoom(){ if(bookEl) bookEl.style.zoom = zoomLevel; }
+  applyZoom();
+
+  if(zoomInBtn) zoomInBtn.addEventListener('click', function(){
+    zoomLevel = Math.min(1.6, Math.round((zoomLevel + 0.1) * 100) / 100);
+    localStorage.setItem(ZOOM_KEY, zoomLevel); applyZoom();
+  });
+  if(zoomOutBtn) zoomOutBtn.addEventListener('click', function(){
+    zoomLevel = Math.max(0.8, Math.round((zoomLevel - 0.1) * 100) / 100);
+    localStorage.setItem(ZOOM_KEY, zoomLevel); applyZoom();
+  });
+
+  window.addEventListener('beforeinstallprompt',function(e){
+    e.preventDefault(); deferredInstallPrompt = e;
+    if(installBtn) installBtn.hidden = false;
+  });
+
+  if(installBtn){
+    installBtn.addEventListener('click',function(){
+      if(!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      deferredInstallPrompt.userChoice.then(function(){
+        deferredInstallPrompt = null; installBtn.hidden = true;
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>
