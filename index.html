@@ -386,6 +386,20 @@ table.ledger tfoot td{
 .sync-dot.error{background:var(--red); animation:none;}
 @keyframes syncPulse{0%,100%{opacity:1;}50%{opacity:.35;}}
 
+.undo-toast{
+  position:fixed; left:50%; bottom:22px; transform:translate(-50%, 24px);
+  background:#1C2541; color:#FCFBF7; padding:10px 10px 10px 16px; border-radius:12px;
+  display:flex; align-items:center; gap:12px; font-family:var(--font-ui); font-size:12.5px;
+  box-shadow:0 8px 24px rgba(0,0,0,.45); opacity:0; pointer-events:none;
+  transition:opacity .25s ease, transform .25s ease; z-index:200; max-width:92vw;
+}
+.undo-toast.show{opacity:1; transform:translate(-50%, 0); pointer-events:auto;}
+.undo-toast #undoBtn{
+  background:var(--gold); color:#0B2A28; border:none; border-radius:9px;
+  padding:6px 12px; font-weight:700; font-size:12px; cursor:pointer; flex:none; white-space:nowrap;
+}
+.undo-toast #undoBtn:hover{background:var(--gold-soft);}
+
 .corner-title{
   position:absolute;
   top:-38px; left:0;
@@ -512,6 +526,10 @@ td.paid-cell .table-edit{border-color:var(--green);}
   font:700 10.5px var(--font-ui); text-transform:uppercase; letter-spacing:.08em;
   color:var(--gold); margin:16px 0 6px; padding-bottom:5px; border-bottom:1px solid var(--rule);
 }
+.group-header-sub{
+  font-weight:400; text-transform:none; letter-spacing:normal;
+  color:var(--ink-soft); font-family:var(--font-mono); margin-left:2px;
+}
 .group-header-row td{
   background:rgba(20,125,119,.13); font:700 10px var(--font-ui); text-transform:uppercase;
   letter-spacing:.08em; color:var(--gold); padding:6px 10px !important;
@@ -601,6 +619,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
 .table-edit:focus{outline:none; border-color:var(--gold); box-shadow:0 0 0 2px rgba(20,125,119,.12);}
 .table-edit.is-override{background:#E1F3F0; border-color:var(--gold);}
 .oran-input.is-override{background:#E1F3F0; border-color:var(--gold);}
+.num-input.is-override{background:#E1F3F0; border-color:var(--gold);}
 .table-name-input{
   width:132px; min-width:110px; border:0; border-bottom:1px dashed var(--rule);
   background:transparent; color:var(--ink); font-family:var(--font-ui); font-size:11px;
@@ -650,6 +669,16 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   background: var(--paper-2); padding: 2px 5px; border-radius: 4px; border: 1px solid var(--rule);
 }
 .unit { font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-soft); }
+.rate-details{ display:inline-flex; align-items:center; vertical-align:middle; }
+.rate-details summary{
+  list-style:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+  width:20px; height:20px; border-radius:50%; background:var(--paper-2); border:1px solid var(--rule);
+  font-size:10.5px; color:var(--ink-soft);
+}
+.rate-details summary::-webkit-details-marker{display:none;}
+.rate-details summary::marker{content:'';}
+.rate-details[open] summary{background:var(--gold); color:#0B2A28; border-color:var(--gold);}
+.rate-details .rate-field{margin-left:4px;}
 .month-addition {
   display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
   background: rgba(192, 71, 63, 0.08); color: var(--red);
@@ -749,6 +778,10 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       <button class="nav-btn" id="nextBtn" aria-label="Sonraki sayfa">&#10095;</button>
       <button type="button" class="sync-dot" id="syncDot" title="Bulut senkron durumu" aria-label="Bulut senkron durumu"></button>
     </div>
+  </div>
+  <div class="undo-toast" id="undoToast">
+    <span class="undo-toast-msg" id="undoToastMsg"></span>
+    <button type="button" id="undoBtn">Geri Al</button>
   </div>
 
 <script>
@@ -904,11 +937,14 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         return Object.assign({}, item, {id:item.id || uid(), ad:item.ad || 'Yeni Harcama', tutar:Number(item.tutar || 0), paid: !!item.paid});
       });
     });
-    out.faturalar = (Array.isArray(out.faturalar) ? out.faturalar : def.faturalar).map(function(f){
+    out.faturalar = (Array.isArray(out.faturalar) ? out.faturalar : def.faturalar).map(function(f,idx){
       var oldAmount = Number(f.tutar || 0);
       var amounts = Array.isArray(f.monthlyAmounts) ? f.monthlyAmounts.slice(0,12) : MONTHS.map(function(){return oldAmount;});
       while(amounts.length < 12) amounts.push(oldAmount);
-      return Object.assign({}, f, {monthlyAmounts:amounts.map(function(v){return Number(v || 0);}), cardTransfers:f.cardTransfers || {}});
+      return Object.assign({}, f, {
+        monthlyAmounts:amounts.map(function(v){return Number(v || 0);}), cardTransfers:f.cardTransfers || {},
+        sortOrder: (typeof f.sortOrder === 'number') ? f.sortOrder : idx
+      });
     });
     out.debts = (Array.isArray(out.debts) ? out.debts : def.debts).map(function(d,idx){
       return Object.assign({}, d, {
@@ -997,8 +1033,18 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       },0);
     },0);
   }
+  function transferredOffBudgetForCard(cardId, targetMonth){
+    var total = 0;
+    for(var mi=0; mi<12; mi++){
+      (STATE.offBudgetExpenses[mi] || []).forEach(function(item){
+        var tr = item.cardTransfer;
+        if(tr && tr.cardId===cardId && Number(tr.targetMonth)===targetMonth) total += Number(tr.amount||0);
+      });
+    }
+    return total;
+  }
   function additionsForDebt(d, i){
-    return Number((d.additions && d.additions[i]) || 0) + transferredBillsForCard(d.id, i);
+    return Number((d.additions && d.additions[i]) || 0) + transferredBillsForCard(d.id, i) + transferredOffBudgetForCard(d.id, i);
   }
 
   function calcDebtSeries(d){
@@ -1008,27 +1054,37 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     var bal = Number(d.baslangic || 0);
     for(var i=0;i<12;i++){
       if(i < d.startMonthIndex){ continue; }
-      bal += additionsForDebt(d, i);
       var payment, sugg;
       if(d.tur === 'kredi_karti'){
+        // Faiz SADECE bu ay başında devreden (yeni harcama eklenmeden önceki) bakiye
+        // üzerinden hesaplanır — yeni harcamalar aynı ay içinde henüz faize tabi olmaz.
+        // Asgari ödeme ise devreden + bu ay yapılan yeni harcamaların TOPLAMI üzerinden
+        // hesaplanır. İkisi toplanarak önerilen ödeme bulunur.
+        var eskiBakiye = bal;
+        var buAyEklenen = additionsForDebt(d, i);
+        bal = eskiBakiye + buAyEklenen;
         var faizYuzdeVal = debtFieldMonthly(d,'faizYuzde',i);
         var asgariYuzdeVal = debtFieldMonthly(d,'asgariYuzde',i);
-        var faizli = bal * (1 + (faizYuzdeVal/100));
-        sugg = bal * ((asgariYuzdeVal + faizYuzdeVal)/100);
+        var faizTutari = eskiBakiye * (faizYuzdeVal/100);
+        var faizli = bal + faizTutari;
+        sugg = bal * (asgariYuzdeVal/100) + faizTutari;
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, faizli - payment);
       } else if(d.tur === 'kmh'){
+        bal += additionsForDebt(d, i);
         var faizYuzdeValKmh = debtFieldMonthly(d,'faizYuzde',i);
         var faizliKmh = bal * (1 + (faizYuzdeValKmh/100));
         sugg = bal * (faizYuzdeValKmh/100);
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, faizliKmh - payment);
       } else if(d.tur === 'kredi'){
+        bal += additionsForDebt(d, i);
         var taksitVal = debtFieldMonthly(d,'taksit',i);
         sugg = Math.min(taksitVal, bal);
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : sugg;
         bal = Math.max(0, bal - payment);
       } else {
+        bal += additionsForDebt(d, i);
         sugg = 0;
         payment = (d.payments && d.payments[i] !== undefined) ? Number(d.payments[i]) : 0;
         bal = Math.max(0, bal - payment);
@@ -1110,7 +1166,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       return !!transferred || !!(f.paidMonths && f.paidMonths[i]);
     });
     if(!faturaOk) return false;
-    var offOk = (STATE.offBudgetExpenses[i]||[]).every(function(item){ return !!item.paid; });
+    var offOk = (STATE.offBudgetExpenses[i]||[]).every(function(item){ return !!item.cardTransfer || !!item.paid; });
     return offOk;
   }
 
@@ -1179,14 +1235,23 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     return '<button type="button" class="paid-toggle'+(paid?' on':'')+'" data-action="toggle-paid" data-list="'+listName+'" data-id="'+d.id+'" data-mi="'+i+'" title="Ödendi">'+(paid?'✓':'')+'</button>';
   }
 
-  function hiddenPanelHtml(){
+  function hiddenPanelHtml(refMonthIdx){
     var hiddenDebts = STATE.debts.filter(function(d){return d.hidden;});
     var hiddenEk = STATE.ekBorclular.filter(function(d){return d.hidden;});
-    var items = hiddenDebts.map(function(d){return {d:d, list:'debts'};}).concat(hiddenEk.map(function(d){return {d:d, list:'ekBorclular'};}));
+    function balAt(d, calcFn){
+      if(refMonthIdx >= 12) return calcFn(d).balances[11] || 0;
+      if(refMonthIdx <= 0) return Number(d.baslangic || 0);
+      if(refMonthIdx <= d.startMonthIndex) return 0;
+      return calcFn(d).balances[refMonthIdx-1] || 0;
+    }
+    var items = hiddenDebts.map(function(d){return {d:d, list:'debts', bal: balAt(d, calcDebtSeries)};})
+      .concat(hiddenEk.map(function(d){return {d:d, list:'ekBorclular', bal: balAt(d, calcEkSeries)};}));
     if(!items.length) return '';
-    return '<div class="hidden-panel">Gizlenen '+items.length+' kalem &middot; '+
+    var hiddenTotal = items.reduce(function(s,o){return s + o.bal;},0);
+    var note = hiddenTotal > 0 ? ' — bu tutar yukarıdaki genel toplama dahildir' : '';
+    return '<div class="hidden-panel">Gizlenen '+items.length+' kalem ('+fmtShort(hiddenTotal)+')'+note+' &middot; '+
       items.map(function(o){
-        return esc(o.d.ad)+' <button type="button" class="show-btn" data-action="show-item" data-list="'+o.list+'" data-id="'+o.d.id+'">Göster</button>';
+        return esc(o.d.ad)+' ('+fmtShort(o.bal)+') <button type="button" class="show-btn" data-action="show-item" data-list="'+o.list+'" data-id="'+o.d.id+'">Göster</button>';
       }).join(' &middot; ')+
     '</div>';
   }
@@ -1208,6 +1273,11 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   }
   function sortedVisibleEk(){
     return STATE.ekBorclular.filter(function(d){return !d.hidden;}).sort(function(a,b){
+      return (a.sortOrder||0)-(b.sortOrder||0);
+    });
+  }
+  function sortedFaturalar(){
+    return STATE.faturalar.slice().sort(function(a,b){
       return (a.sortOrder||0)-(b.sortOrder||0);
     });
   }
@@ -1235,11 +1305,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
   function missedToggleHtml(listName, d, i){
     var missed = !!(d.missedMonths && d.missedMonths[i]);
     return '<button type="button" class="missed-toggle'+(missed?' on':'')+'" data-action="toggle-missed" data-list="'+listName+'" data-id="'+d.id+'" data-mi="'+i+'" title="Ödenemedi">'+(missed?'✕':'')+'</button>';
-  }
-  function progressBarHtml(d, balance){
-    if(!d.baslangic || d.baslangic<=0) return '';
-    var pct = Math.max(0, Math.min(100, Math.round((1-(balance/d.baslangic))*100)));
-    return '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div><span class="progress-pct">%'+pct+' ödendi</span>';
   }
 
   function renderOzet(){
@@ -1275,17 +1340,17 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         '<button class="hide-btn" data-action="hide-item" data-list="ekBorclular" data-id="'+d.id+'" title="Gizle">🙈</button><button class="table-del" data-action="del" data-list="ekBorclular" data-id="'+d.id+'" title="Sil">✕</button></td><td>'+principalInputHtml('ekBorclular',d)+'</td>'+cells+'</tr>';
     }).join('');
 
-    var faturaRows = STATE.faturalar.map(function(f){
+    var faturaRows = sortedFaturalar().map(function(f){
       var cells = MONTHS.map(function(m,i){
         var transferred = (f.cardTransfers || {})[i];
         if(transferred){
           var trCard2 = STATE.debts.filter(function(c){return c.id === transferred.cardId;})[0];
           var trCardName2 = trCard2 ? trCard2.ad : 'silinmiş kart';
-          return '<td><span class="meta" style="display:block;">→ '+esc(trCardName2)+'</span><input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'" disabled></td>';
+          return '<td><span class="meta" style="display:block;">→ '+esc(trCardName2)+'</span><input class="table-edit is-override" data-action="bill-transfer-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(transferred.amount)+'"></td>';
         }
         return '<td>'+paidToggleHtml('faturalar',f,i)+'<input class="table-edit" data-action="bill-amt" data-id="'+f.id+'" data-mi="'+i+'" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(f,i))+'"></td>';
       }).join('');
-      return '<tr><td><input class="table-name-input" data-action="name" data-list="faturalar" data-id="'+f.id+'" value="'+esc(f.ad)+'">'+
+      return '<tr><td>'+moveButtonsHtml('faturalar',f.id)+'<input class="table-name-input" data-action="name" data-list="faturalar" data-id="'+f.id+'" value="'+esc(f.ad)+'">'+
         '<button class="table-del" data-action="del" data-list="faturalar" data-id="'+f.id+'" title="Sil">✕</button></td>'+cells+'</tr>';
     }).join('');
     var faturaTotalCells = MONTHS.map(function(m,i){return '<td>'+fmtShort(billTotalForMonth(i))+'</td>';}).join('');
@@ -1326,6 +1391,16 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     var endKalan = totalByMonth[11];
     var endBorsa = borsa[11];
     var openIdx = firstOpenMonthIndex();
+    // Referans noktasından (openIdx) itibaren başlayan ama henüz o ay kapatılmadığı için
+    // totalByMonth[openIdx-1]'e dahil olmayan borç/ek borçluların TAM (hiç ödeme
+    // düşülmemiş) başlangıç tutarlarını hesaplıyoruz. Böylece yeni bir borç eklenir
+    // eklenmez -- ilgili ay kapatılmayı beklemeden -- Kalan Borç rakamına yansır.
+    function notYetReflectedTotal(refIdx){
+      var sum = 0;
+      STATE.debts.forEach(function(d){ if(d.startMonthIndex >= refIdx) sum += Number(d.baslangic || 0); });
+      STATE.ekBorclular.forEach(function(d){ if(d.startMonthIndex >= refIdx) sum += Number(d.baslangic || 0); });
+      return sum;
+    }
     var currentRemainingLabel, currentRemainingValue;
     if(openIdx >= 12){
       currentRemainingLabel = 'Tüm Yıl Kapandı · Kalan Borç';
@@ -1335,7 +1410,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       currentRemainingValue = totalStart;
     } else {
       currentRemainingLabel = MONTHS[openIdx]+' İtibarıyla Kalan Borç';
-      currentRemainingValue = totalByMonth[openIdx-1];
+      currentRemainingValue = totalByMonth[openIdx-1] + notYetReflectedTotal(openIdx);
     }
     var maxFlow = monthlyMetrics.reduce(function(max,mt){return Math.max(max,mt.gelir,mt.toplamGider);},1);
     var reportCards = monthlyMetrics.map(function(mt,i){
@@ -1394,7 +1469,7 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         '<tfoot><tr><td>Toplam</td><td>'+fmtShort(ekTotalStart)+'</td>'+ekTotalCells+'</tr></tfoot>'+
       '</table></div>'+
       '<button class="add-btn" data-action="add-ek">+ Ek Borçlu Ekle</button>'+
-      hiddenPanelHtml()+
+      hiddenPanelHtml(openIdx)+
       '<div class="table-scroll"><table class="ledger"><tbody>'+
         '<tr><td><strong>Genel Toplam</strong></td><td><strong>'+fmtShort(totalStart)+'</strong></td>'+totalCells+'</tr>'+
       '</tbody></table></div>'+
@@ -1466,18 +1541,32 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         '<button class="del-btn" data-list="expenses" data-id="'+e.id+'" data-action="del">✕</button></div>';
     }).join('');
 
+    var creditCards = STATE.debts.filter(function(d){return d.tur==='kredi_karti';});
     var offBudgetItems = STATE.offBudgetExpenses[mi] || [];
     var offBudgetRows = offBudgetItems.map(function(e){
       var obPaid = !!e.paid;
-      return '<div class="ed-row offbudget-row'+(obPaid?' paid':'')+'">'+
-        '<button type="button" class="paid-toggle'+(obPaid?' on':'')+'" data-action="offbudget-toggle-paid" data-id="'+e.id+'" data-mi="'+mi+'" title="Ödendi">'+(obPaid?'✓':'')+'</button>'+
+      var obTr = e.cardTransfer;
+      var obActionHtml, obToggleHtml;
+      if(obTr){
+        var obTrCard = STATE.debts.filter(function(c){return c.id === obTr.cardId;})[0];
+        var obTrCardName = obTrCard ? obTrCard.ad : 'silinmiş kart';
+        obActionHtml = '<span class="meta">→ '+esc(obTrCardName)+'</span> <button class="transfer-btn undo" data-action="undo-offbudget-transfer" data-id="'+e.id+'" data-mi="'+mi+'">Geri al</button>';
+        obToggleHtml = '';
+      } else {
+        var obOptions = creditCards.map(function(card){return '<option value="'+card.id+'">'+esc(card.ad)+'</option>';}).join('');
+        obActionHtml = '<select class="bill-card-select" id="obCard_'+e.id+'_'+mi+'" '+(creditCards.length?'':'disabled')+'><option value="">Kart seç</option>'+obOptions+'</select>'+
+          '<button class="transfer-btn" data-action="transfer-offbudget" data-id="'+e.id+'" data-mi="'+mi+'" '+((mi>=11 || !creditCards.length)?'disabled':'')+'>Karta aktar</button>';
+        obToggleHtml = '<button type="button" class="paid-toggle'+(obPaid?' on':'')+'" data-action="offbudget-toggle-paid" data-id="'+e.id+'" data-mi="'+mi+'" title="Ödendi">'+(obPaid?'✓':'')+'</button>';
+      }
+      return '<div class="ed-row offbudget-row bill-row'+((obPaid||obTr)?' paid':'')+'"><div class="bill-main">'+obToggleHtml+
         '<input class="name-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-name" value="'+esc(e.ad)+'">'+
-        '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-amt" type="text" inputmode="decimal" value="'+editVal(e.tutar)+'">'+
-        '<button class="del-btn" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-del">✕</button></div>';
+        (obTr
+          ? '<input class="num-input amt-input is-override" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-transfer-amt" type="text" inputmode="decimal" value="'+editVal(obTr.amount)+'">'
+          : '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-amt" type="text" inputmode="decimal" value="'+editVal(e.tutar)+'">')+
+        '<button class="del-btn" data-id="'+e.id+'" data-mi="'+mi+'" data-action="offbudget-del">✕</button></div><div class="bill-actions">'+obActionHtml+'</div></div>';
     }).join('');
 
-    var creditCards = STATE.debts.filter(function(d){return d.tur==='kredi_karti';});
-    var faturaRows = STATE.faturalar.map(function(e){
+    var faturaRows = sortedFaturalar().map(function(e){
       var tr = (e.cardTransfers || {})[mi];
       var billPaid = !!(e.paidMonths && e.paidMonths[mi]);
       var actionHtml, toggleHtml;
@@ -1492,35 +1581,52 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
           '<button class="transfer-btn" data-action="transfer-bill" data-id="'+e.id+'" data-mi="'+mi+'" '+((mi>=11 || !creditCards.length)?'disabled':'')+'>Karta aktar</button>';
         toggleHtml = paidToggleHtml('faturalar',e,mi);
       }
-      return '<div class="ed-row bill-row'+((billPaid||tr)?' paid':'')+'"><div class="bill-main">'+toggleHtml+'<input class="name-input" data-list="faturalar" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
-        '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="bill-amt" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(e,mi))+'" '+(tr?'disabled':'')+'>'+
+      return '<div class="ed-row bill-row'+((billPaid||tr)?' paid':'')+'"><div class="bill-main">'+moveButtonsHtml('faturalar',e.id)+toggleHtml+'<input class="name-input" data-list="faturalar" data-id="'+e.id+'" data-action="name" value="'+esc(e.ad)+'">'+
+        (tr
+          ? '<input class="num-input amt-input is-override" data-id="'+e.id+'" data-mi="'+mi+'" data-action="bill-transfer-amt" type="text" inputmode="decimal" value="'+editVal(tr.amount)+'">'
+          : '<input class="num-input amt-input" data-id="'+e.id+'" data-mi="'+mi+'" data-action="bill-amt" type="text" inputmode="decimal" value="'+editVal(billAmountForMonth(e,mi))+'">')+
         '<button class="del-btn" data-list="faturalar" data-id="'+e.id+'" data-action="del">✕</button></div><div class="bill-actions">'+actionHtml+'</div></div>';
     }).join('');
 
     var mt = monthTotals(mi);
     var kalanGenelBorc = computeGrandTotals().totalByMonth[mi];
 
+    var groupTotalsM = {};
+    sortedVisibleDebts().forEach(function(d){
+      if(mi < d.startMonthIndex) return;
+      var gser = calcDebtSeries(d);
+      var g = groupTotalsM[d.tur] || (groupTotalsM[d.tur] = {payment:0, balance:0});
+      g.payment += (gser.paid[mi]||0);
+      g.balance += (gser.balances[mi]||0);
+    });
+
     var debtRows = '';
     var lastTurM = null;
     sortedVisibleDebts().forEach(function(d){
       if(d.tur !== lastTurM){
         lastTurM = d.tur;
-        debtRows += '<div class="group-header">'+(GROUP_LABELS[d.tur]||d.tur)+'</div>';
+        var gt3 = groupTotalsM[d.tur] || {payment:0, balance:0};
+        debtRows += '<div class="group-header">'+(GROUP_LABELS[d.tur]||d.tur)+
+          ' <span class="group-header-sub">('+fmtShort(gt3.payment).replace(' TL','')+'/'+fmtShort(gt3.balance).replace(' TL','')+')</span></div>';
       }
       if(mi < d.startMonthIndex){
-        debtRows += '<div class="ed-row debt-row na"><div class="debt-identity"><span>'+esc(d.ad)+'</span><span class="badge-tur '+d.tur+'">'+turLabel(d.tur)+'</span></div><div class="debt-details"><span class="meta">henüz başlamadı</span></div><div class="progress-row"></div><div class="field-stack"></div><button class="hide-btn" style="visibility:hidden;">🙈</button><button class="del-btn" style="visibility:hidden;">✕</button></div>';
+        debtRows += '<div class="ed-row debt-row na"><div class="debt-identity"><span>'+esc(d.ad)+'</span></div><div class="debt-details"><span class="meta">henüz başlamadı</span></div><div class="progress-row"></div><div class="field-stack"></div><button class="hide-btn" style="visibility:hidden;">🙈</button><button class="del-btn" style="visibility:hidden;">✕</button></div>';
         return;
       }
       var ser = calcDebtSeries(d);
       var payVal = (d.payments && d.payments[mi] !== undefined) ? d.payments[mi] : ser.suggested[mi];
-      var added = additionsForDebt(d,mi);
+      var manualSpend = Number((d.additions && d.additions[mi]) || 0);
+      var transferredAmt = transferredBillsForCard(d.id,mi) + transferredOffBudgetForCard(d.id,mi);
       var isPaid = !!(d.paidMonths && d.paidMonths[mi]);
       var isMissed = !!(d.missedMonths && d.missedMonths[mi]);
       
       var extra = '';
       if(d.tur === 'kredi_karti'){
-        extra = '<span class="rate-field"><span class="meta">asg</span><input class="oran-input'+(debtFieldIsOverridden(d,'asgariYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="asgariYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'asgariYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
+        var ccHasOverride = debtFieldIsOverridden(d,'asgariYuzde',mi) || debtFieldIsOverridden(d,'faizYuzde',mi);
+        extra = '<details class="rate-details"'+(ccHasOverride?' open':'')+'><summary title="Oranları düzenle">✎</summary>'+
+                '<span class="rate-field"><span class="meta">asg</span><input class="oran-input'+(debtFieldIsOverridden(d,'asgariYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="asgariYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'asgariYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
                 '<span class="rate-field"><span class="meta">faiz</span><input class="oran-input'+(debtFieldIsOverridden(d,'faizYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="faizYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'faizYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
+                '</details>'+
                 '<span class="meta">&middot; '+fmtShort(ser.balances[mi])+'</span>';
       } else if(d.tur === 'kmh'){
         extra = '<span class="rate-field"><span class="meta">faiz</span><input class="oran-input'+(debtFieldIsOverridden(d,'faizYuzde',mi)?' is-override':'')+'" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-field="faizYuzde" data-action="kk-rate" type="text" inputmode="decimal" value="'+editVal(debtFieldMonthly(d,'faizYuzde',mi)).replace(',00','')+'"><span class="unit">%</span></span>'+
@@ -1532,14 +1638,17 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         extra = '<span class="meta">'+fmtShort(ser.balances[mi])+'</span>';
       }
       
-      if(added) extra += '<span class="month-addition">Faturalar: +'+fmtShort(added)+'</span>';
+      if(transferredAmt) extra += '<span class="month-addition">Aktarılan: +'+fmtShort(transferredAmt)+'</span>';
       
+      var spendFieldHtml = (d.tur === 'kredi_karti')
+        ? '<span class="mini-label">Harcama</span><input class="num-input amt-input" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-action="cc-spend" type="text" inputmode="decimal" value="'+editVal(manualSpend)+'">'
+        : '';
+
       debtRows += '<div class="ed-row debt-row'+(isPaid?' paid':'')+(isMissed?' missed':'')+'">'+
-        '<div class="debt-identity">'+moveButtonsHtml('debts',d.id)+paidToggleHtml('debts',d,mi)+missedToggleHtml('debts',d,mi)+'<input class="name-input" data-list="debts" data-id="'+d.id+'" data-action="name" value="'+esc(d.ad)+'">'+
-        '<span class="badge-tur '+d.tur+'">'+turLabel(d.tur)+'</span></div>'+
+        '<div class="debt-identity">'+moveButtonsHtml('debts',d.id)+paidToggleHtml('debts',d,mi)+missedToggleHtml('debts',d,mi)+'<input class="name-input" data-list="debts" data-id="'+d.id+'" data-action="name" value="'+esc(d.ad)+'"></div>'+
         '<div class="debt-details">'+extra+'</div>'+
-        '<div class="progress-row">'+progressBarHtml(d, ser.balances[mi])+'</div>'+
-        '<div class="field-stack"><span class="mini-label">Ödeme</span><input class="num-input amt-input" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-action="pay" type="text" inputmode="decimal" value="'+editVal(payVal)+'">'+
+        '<div class="progress-row"></div>'+
+        '<div class="field-stack">'+spendFieldHtml+'<span class="mini-label">Ödeme</span><input class="num-input amt-input" data-list="debts" data-id="'+d.id+'" data-mi="'+mi+'" data-action="pay" type="text" inputmode="decimal" value="'+editVal(payVal)+'">'+
         '<span class="mini-label">Bakiye</span>'+balanceInputHtml('debts',d,mi,ser.balances[mi])+'</div>'+
         '<button class="hide-btn" data-list="debts" data-id="'+d.id+'" data-action="hide-item">🙈</button>'+
         '<button class="del-btn" data-list="debts" data-id="'+d.id+'" data-action="del">✕</button></div>';
@@ -1724,6 +1833,40 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     return STATE[name];
   }
 
+  var lastDeleted = null;
+  var undoTimeoutId = null;
+  var undoToastEl = document.getElementById('undoToast');
+  var undoToastMsgEl = document.getElementById('undoToastMsg');
+  var undoBtnEl = document.getElementById('undoBtn');
+
+  function showUndoToast(message){
+    if(!undoToastEl) return;
+    if(undoToastMsgEl) undoToastMsgEl.textContent = message;
+    undoToastEl.classList.add('show');
+    clearTimeout(undoTimeoutId);
+    undoTimeoutId = setTimeout(function(){
+      undoToastEl.classList.remove('show');
+      lastDeleted = null;
+    }, 7000);
+  }
+
+  function performUndo(){
+    if(!lastDeleted) return;
+    if(lastDeleted.type === 'offbudget'){
+      var arr = STATE.offBudgetExpenses[lastDeleted.offMi] || (STATE.offBudgetExpenses[lastDeleted.offMi] = []);
+      arr.splice(Math.min(lastDeleted.index, arr.length), 0, lastDeleted.item);
+    } else {
+      var list = findList(lastDeleted.listName);
+      if(list) list.splice(Math.min(lastDeleted.index, list.length), 0, lastDeleted.item);
+    }
+    lastDeleted = null;
+    clearTimeout(undoTimeoutId);
+    if(undoToastEl) undoToastEl.classList.remove('show');
+    save(); rerenderCurrent();
+  }
+
+  if(undoBtnEl) undoBtnEl.addEventListener('click', performUndo);
+
   function onChange(e){
     var t = e.target;
     var action = t.dataset.action;
@@ -1807,6 +1950,28 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       }
       return;
     }
+    if(action === 'bill-transfer-amt'){
+      if(String(t.value).trim()===''){ rerenderCurrent(); return; }
+      var trBill = STATE.faturalar.filter(function(x){return x.id===t.dataset.id;})[0];
+      var trBillMi = parseInt(t.dataset.mi,10);
+      var trBillEntry = trBill && trBill.cardTransfers ? trBill.cardTransfers[trBillMi] : null;
+      if(trBillEntry){
+        trBillEntry.amount = Math.max(0, parseNum(t.value));
+        save(); rerenderCurrent();
+      }
+      return;
+    }
+    if(action === 'offbudget-transfer-amt'){
+      if(String(t.value).trim()===''){ rerenderCurrent(); return; }
+      var trObMi = parseInt(t.dataset.mi,10);
+      var trObList = STATE.offBudgetExpenses[trObMi] || [];
+      var trObItem = trObList.filter(function(x){return x.id===t.dataset.id;})[0];
+      if(trObItem && trObItem.cardTransfer){
+        trObItem.cardTransfer.amount = Math.max(0, parseNum(t.value));
+        save(); rerenderCurrent();
+      }
+      return;
+    }
     if(action === 'principal'){
       if(String(t.value).trim()===''){ rerenderCurrent(); return; }
       var principalList = findList(t.dataset.list);
@@ -1834,6 +1999,18 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
         item3.payments = item3.payments || {};
         if(String(t.value).trim()===''){ delete item3.payments[mi3]; }
         else item3.payments[mi3] = parseNum(t.value);
+        save(); rerenderCurrent();
+      }
+      return;
+    }
+    if(action === 'cc-spend'){
+      var listCC = findList(t.dataset.list);
+      var itemCC = listCC.filter(function(x){return x.id===t.dataset.id;})[0];
+      var miCC = parseInt(t.dataset.mi,10);
+      if(itemCC){
+        itemCC.additions = itemCC.additions || {};
+        if(String(t.value).trim()===''){ delete itemCC.additions[miCC]; }
+        else itemCC.additions[miCC] = Math.max(0, parseNum(t.value));
         save(); rerenderCurrent();
       }
       return;
@@ -1928,7 +2105,12 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
       var delOffMi = parseInt(t.dataset.mi,10);
       var delOffList = STATE.offBudgetExpenses[delOffMi] || [];
       var delOffIndex = delOffList.findIndex(function(x){return x.id===t.dataset.id;});
-      if(delOffIndex>-1){delOffList.splice(delOffIndex,1);save();rerenderCurrent();}
+      if(delOffIndex>-1){
+        var delOffItem = delOffList[delOffIndex];
+        lastDeleted = {type:'offbudget', offMi:delOffMi, item:delOffItem, index:delOffIndex};
+        delOffList.splice(delOffIndex,1);save();rerenderCurrent();
+        showUndoToast('"'+(delOffItem.ad||'Kalem')+'" silindi.');
+      }
       return;
     }
     if(action === 'offbudget-toggle-paid'){
@@ -1941,141 +2123,6 @@ td.missed-cell .table-edit{border-color:#9a3b3b;}
     if(action === 'del'){
       var list = findList(t.dataset.list);
       var i = list.findIndex(function(x){return x.id===t.dataset.id;});
-      if(i>-1){ list.splice(i,1); save(); rerenderCurrent(); }
-      return;
-    }
-    if(action === 'add-simple'){
-      var list2 = findList(t.dataset.list);
-      if(t.dataset.list==='faturalar') list2.push({id:uid(), ad:'Yeni Fatura', tutar:0, monthlyAmounts:MONTHS.map(function(){return 0;}), cardTransfers:{}});
-      else if(t.dataset.list==='expenses') list2.push({id:uid(), ad:'Yeni Kalem', tutar:0, monthlyAmounts:MONTHS.map(function(){return 0;})});
-      else list2.push({id:uid(), ad:'Yeni Kalem', tutar:0});
-      save(); rerenderCurrent(); return;
-    }
-    if(action === 'add-ek'){
-      STATE.ekBorclular.push({id:uid(), ad:'Yeni Kişi', baslangic:0, startMonthIndex:Math.max(0,current-1), payments:{}, balanceOverrides:{}, additions:{}, paidMonths:{}, missedMonths:{}, hidden:false, sortOrder:STATE.ekBorclular.length});
-      save(); rerenderCurrent(); return;
-    }
-    if(action === 'transfer-bill'){
-      var transferMi = parseInt(t.dataset.mi,10);
-      var transferBill = STATE.faturalar.filter(function(x){return x.id===t.dataset.id;})[0];
-      var cardSelect = document.getElementById('billCard_'+t.dataset.id+'_'+transferMi);
-      var cardId = cardSelect ? cardSelect.value : '';
-      var amount = transferBill ? billAmountForMonth(transferBill, transferMi) : 0;
-      if(!cardId){ window.alert('Kart seçin.'); return; }
-      transferBill.cardTransfers = transferBill.cardTransfers || {};
-      transferBill.cardTransfers[transferMi] = {cardId:cardId, amount:amount, targetMonth:transferMi+1};
-      transferBill.monthlyAmounts[transferMi] = 0;
-      save(); rerenderCurrent(); return;
-    }
-    if(action === 'undo-bill-transfer'){
-      var undoMi = parseInt(t.dataset.mi,10);
-      var undoBill = STATE.faturalar.filter(function(x){return x.id===t.dataset.id;})[0];
-      var undoTransfer = undoBill && undoBill.cardTransfers ? undoBill.cardTransfers[undoMi] : null;
-      if(undoBill && undoTransfer){
-        undoBill.monthlyAmounts[undoMi] = Number(undoTransfer.amount || 0);
-        delete undoBill.cardTransfers[undoMi];
-        save(); rerenderCurrent();
-      }
-      return;
-    }
-    if(action === 'open-add-debt'){
-      pendingAddDebtMonth = Math.max(0,current - 1);
-      var slot = document.getElementById('addDebtSlot');
-      if(slot){
-        slot.innerHTML = addDebtFormHtml(pendingAddDebtMonth);
-        var turSel = document.getElementById('ndTur');
-        var kkRow = document.getElementById('ndKKRow');
-        var kmhRow = document.getElementById('ndKMHRow');
-        var krRow = document.getElementById('ndKrediRow');
-        turSel.addEventListener('change', function(){
-          kkRow.style.display = (turSel.value==='kredi_karti') ? 'flex' : 'none';
-          kmhRow.style.display = (turSel.value==='kmh') ? 'flex' : 'none';
-          krRow.style.display = (turSel.value==='kredi') ? 'flex' : 'none';
-        });
-        document.getElementById('ndCancel').addEventListener('click', function(){ slot.innerHTML=''; });
-        document.getElementById('ndSave').addEventListener('click', function(){
-          var ad = document.getElementById('ndAd').value.trim() || 'Yeni Borç';
-          var tur = turSel.value;
-          var baslangic = parseNum(document.getElementById('ndBaslangic').value);
-          var startMonth = parseInt(document.getElementById('ndStartMonth').value,10);
-          var nd = {id:uid(), ad:ad, tur:tur, baslangic:baslangic, startMonthIndex:isNaN(startMonth)?0:startMonth, payments:{}, balanceOverrides:{}, additions:{}, paidMonths:{}, missedMonths:{}, hidden:false, sortOrder:STATE.debts.length};
-          if(tur==='kredi_karti'){
-            nd.asgariYuzde = parseNum(document.getElementById('ndAsgari').value) || 20;
-            nd.faizYuzde = parseNum(document.getElementById('ndFaiz').value) || 5;
-          } else if(tur==='kmh'){
-            nd.faizYuzde = parseNum(document.getElementById('ndKmhFaiz').value) || 5;
-          } else if(tur==='kredi'){
-            nd.taksit = parseNum(document.getElementById('ndTaksit').value) || baslangic;
-          }
-          STATE.debts.push(nd);
-          save(); rerenderCurrent();
-        });
-      }
-      return;
-    }
-  }
-
-  document.getElementById('book').addEventListener('change', onChange);
-  document.getElementById('book').addEventListener('click', onClick);
-
-  buildTabs();
-  loadFromSupabase().then(function(){
-    baseLeaf.innerHTML = renderPage(0);
-    updateIndicator();
-  });
-
-  // Cihazlar arası tam veri akışı: sekme/uygulama tekrar görünür olduğunda,
-  // pencere odağı geri geldiğinde ve düzenli aralıklarla buluttan kontrol et.
-  if(syncDotEl) syncDotEl.addEventListener('click', function(){
-    if(syncDotEl.classList.contains('error')){
-      window.alert('⚠ Buluta ulaşılamıyor\n\nHata: '+lastSyncErrorDetail+'\n\nVerilerin bu cihazda güvende (yerelde kayıtlı), sadece diğer cihazlarla henüz senkron değil. Şimdi tekrar deniyorum…');
-    }
-    refreshFromCloud(true);
-  });
-  document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshFromCloud(false); });
-  window.addEventListener('focus', function(){ refreshFromCloud(false); });
-  window.addEventListener('pageshow', function(){ refreshFromCloud(false); });
-  setInterval(function(){ if(!document.hidden) refreshFromCloud(false); }, 25000);
-})();
-</script>
-
-<script>
-(function(){
-  var installBtn = document.getElementById('installBtn');
-  var deferredInstallPrompt = null;
-  var bookEl = document.getElementById('book');
-  var zoomOutBtn = document.getElementById('zoomOut');
-  var zoomInBtn = document.getElementById('zoomIn');
-  var ZOOM_KEY = 'birikimDefteri_zoom';
-  var zoomLevel = parseFloat(localStorage.getItem(ZOOM_KEY)) || 1;
-  
-  function applyZoom(){ if(bookEl) bookEl.style.zoom = zoomLevel; }
-  applyZoom();
-
-  if(zoomInBtn) zoomInBtn.addEventListener('click', function(){
-    zoomLevel = Math.min(1.6, Math.round((zoomLevel + 0.1) * 100) / 100);
-    localStorage.setItem(ZOOM_KEY, zoomLevel); applyZoom();
-  });
-  if(zoomOutBtn) zoomOutBtn.addEventListener('click', function(){
-    zoomLevel = Math.max(0.8, Math.round((zoomLevel - 0.1) * 100) / 100);
-    localStorage.setItem(ZOOM_KEY, zoomLevel); applyZoom();
-  });
-
-  window.addEventListener('beforeinstallprompt',function(e){
-    e.preventDefault(); deferredInstallPrompt = e;
-    if(installBtn) installBtn.hidden = false;
-  });
-
-  if(installBtn){
-    installBtn.addEventListener('click',function(){
-      if(!deferredInstallPrompt) return;
-      deferredInstallPrompt.prompt();
-      deferredInstallPrompt.userChoice.then(function(){
-        deferredInstallPrompt = null; installBtn.hidden = true;
-      });
-    });
-  }
-})();
-</script>
-</body>
-</html>
+      if(i>-1){
+        var delItem = list[i];
+        lastDeleted
